@@ -83,6 +83,54 @@ div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacin
       return;
     }
 
+    // --- canale realtime via HTTP (nessuna WebSocket: in WKWebView la WSS
+    //     valida il certificato con un percorso separato che fallisce con CA
+    //     locale; fetch/EventSource usano lo stesso percorso dei file statici) ---
+    if (url.pathname === "/api/events") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      res.write(": ok\n\n");
+      sendSse(res, { type: "status", trusted: helperTrusted, display: helperDisplay, hostname: BONJOUR });
+      sseClients.add(res);
+      const keep = setInterval(() => {
+        try { res.write(": keepalive\n\n"); } catch (_) {}
+      }, 15000);
+      const ip = (req.socket.remoteAddress || "?").replace("::ffff:", "");
+      console.log(`client SSE connesso da ${ip}`);
+      req.on("close", () => {
+        clearInterval(keep);
+        sseClients.delete(res);
+        console.log(`client SSE disconnesso da ${ip}`);
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/input" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => {
+        body += c;
+        if (body.length > 1e6) req.destroy();
+      });
+      req.on("end", () => {
+        let parsed;
+        try {
+          parsed = JSON.parse(body);
+        } catch (_) {
+          res.writeHead(400).end("bad json");
+          return;
+        }
+        const msgs = Array.isArray(parsed) ? parsed : [parsed];
+        for (const msg of msgs) handleMessage(msg);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        res.end('{"ok":true}');
+      });
+      return;
+    }
+
     let file = url.pathname === "/" ? "/index.html" : url.pathname;
     const full = path.normalize(path.join(PUB, file));
     if (!full.startsWith(PUB)) {
@@ -102,6 +150,11 @@ div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacin
     });
   }
 );
+
+// SSE: il flusso resta aperto a lungo, niente timeout di richiesta.
+server.requestTimeout = 0;
+server.headersTimeout = 60000;
+server.keepAliveTimeout = 120000;
 
 // --- helper cursore (CGEvent) ---
 let helper = null;
@@ -148,7 +201,44 @@ function sendHelper(obj) {
   }
 }
 
-// --- WebSocket ---
+// --- messaggi (comuni a WebSocket e HTTP/SSE) ---
+const MEDIA_KEYS = ["volup", "voldown", "mute", "play", "next", "prev"];
+
+function handleMessage(msg) {
+  if (!msg || typeof msg !== "object") return;
+  switch (msg.type) {
+    case "ping":
+      break;
+    case "move":
+      sendHelper({ cmd: "move", x: msg.x, y: msg.y });
+      break;
+    case "click":
+      sendHelper({ cmd: "click", button: msg.button === "right" ? "right" : "left" });
+      break;
+    case "scroll":
+      sendHelper({ cmd: "scroll", dx: Number(msg.dx) || 0, dy: Number(msg.dy) || 0 });
+      break;
+    case "text":
+      if (typeof msg.text === "string" && msg.text.trim()) {
+        sendHelper({ cmd: "text", text: msg.text.slice(0, 500) });
+      }
+      break;
+    case "key":
+      if (typeof msg.key === "string") {
+        sendHelper({ cmd: "key", key: msg.key, command: !!msg.command });
+      }
+      break;
+    case "media":
+      if (MEDIA_KEYS.includes(msg.key)) {
+        sendHelper({ cmd: "media", key: msg.key });
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+// --- WebSocket (mantenuto per compatibilità; il client usa SSE + fetch) ---
 const wss = new WebSocketServer({ server });
 
 // heartbeat: chiude i socket "zombie" che iOS lascia aperti a livello applicativo
@@ -166,6 +256,13 @@ const heartbeat = setInterval(() => {
 }, PING_MS);
 wss.on("close", () => clearInterval(heartbeat));
 
+// --- client SSE + broadcast di stato ---
+const sseClients = new Set();
+
+function sendSse(res, obj) {
+  try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {}
+}
+
 function broadcastStatus() {
   const data = JSON.stringify({
     type: "status",
@@ -174,9 +271,8 @@ function broadcastStatus() {
     hostname: BONJOUR,
   });
   for (const c of wss.clients) if (c.readyState === 1) c.send(data);
+  for (const res of sseClients) sendSse(res, JSON.parse(data));
 }
-
-const MEDIA_KEYS = ["volup", "voldown", "mute", "play", "next", "prev"];
 
 wss.on("connection", (ws, req) => {
   const ip = (req.socket.remoteAddress || "?").replace("::ffff:", "");
@@ -203,37 +299,11 @@ wss.on("connection", (ws, req) => {
     } catch (_) {
       return;
     }
-    switch (msg.type) {
-      case "ping":
-        ws.send(JSON.stringify({ type: "pong" }));
-        break;
-      case "move":
-        sendHelper({ cmd: "move", x: msg.x, y: msg.y });
-        break;
-      case "click":
-        sendHelper({ cmd: "click", button: msg.button === "right" ? "right" : "left" });
-        break;
-      case "scroll":
-        sendHelper({ cmd: "scroll", dx: Number(msg.dx) || 0, dy: Number(msg.dy) || 0 });
-        break;
-      case "text":
-        if (typeof msg.text === "string" && msg.text.trim()) {
-          sendHelper({ cmd: "text", text: msg.text.slice(0, 500) });
-        }
-        break;
-      case "key":
-        if (typeof msg.key === "string") {
-          sendHelper({ cmd: "key", key: msg.key, command: !!msg.command });
-        }
-        break;
-      case "media":
-        if (MEDIA_KEYS.includes(msg.key)) {
-          sendHelper({ cmd: "media", key: msg.key });
-        }
-        break;
-      default:
-        break;
+    if (msg.type === "ping") {
+      ws.send(JSON.stringify({ type: "pong" }));
+      return;
     }
+    handleMessage(msg);
   });
 });
 

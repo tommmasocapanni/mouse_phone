@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v10";
+  const BUILD = "v11";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -48,7 +48,6 @@
     JSON.parse(localStorage.getItem("mouse_phone.v4") || "{}")
   );
 
-  let ws = null;
   let hostname = "";
   let connected = false;
   let powerOn = true;
@@ -60,11 +59,13 @@
   let anchored = false;
   let sheetOpen = false;
   let toastTimer = null;
-  let connectTimer = null;
-  let connectingSince = 0;
-  let lastHealthyAt = performance.now();
-  let lastPongAt = 0;
-  let pingTimer = null;
+  let es = null;
+  let outbox = [];
+  let flushing = false;
+  let flushTimer = null;
+  let lastFlushAt = 0;
+  let lastEventAt = performance.now();
+  let disconnectedSince = 0;
   let hasEverConnected = false;
   let lastHardReloadAt = 0;
   let lastError = "";
@@ -153,7 +154,7 @@
   }
 
   function send(obj) {
-    if (ws && ws.readyState === WebSocket.OPEN && powerOn) ws.send(JSON.stringify(obj));
+    if (powerOn) enqueue(obj);
   }
 
   function updateMode() {
@@ -176,15 +177,17 @@
       return;
     }
     const mode = standalone ? "WEBAPP" : "SAFARI";
-    const rs = ws ? ws.readyState : -1;
-    const rsName = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"][rs] || "none";
+    const state = es ? (connected ? "OPEN" : "RECONNECT") : "none";
     const hint = standalone ? " · rimuovi l'icona e ri-aggiungila SENZA 'Apri come app web'" : "";
     diagEl.textContent =
-      `${BUILD} ${mode} · ${location.origin} · ws:${rsName} · err:${lastError || "-"} · close:${closeInfo || "-"} · tent#${attempts}${hint}`;
+      `${BUILD} ${mode} · ${location.origin} · sse:${state} · err:${lastError || "-"} · close:${closeInfo || "-"} · tent#${attempts}${hint}`;
     diagEl.classList.add("show");
   }
 
-  // ---------- WebSocket ----------
+  // ---------- trasporto realtime: EventSource (ricezione) + fetch (invio) ----------
+  // Niente WebSocket: in WKWebView la WSS valida il certificato con un percorso
+  // separato che rifiuta la CA locale, mentre fetch/EventSource usano lo stesso
+  // percorso dei file dell'app (funziona anche nella web app a tutto schermo).
   function hardReload() {
     try {
       location.reload();
@@ -195,141 +198,143 @@
     }
   }
 
-  function scheduleReconnect(delay) {
-    if (connectTimer) return;
-    connectTimer = setTimeout(() => {
-      connectTimer = null;
-      connect();
-    }, delay);
-  }
-
-  function teardownSocket() {
-    if (connectTimer) {
-      clearTimeout(connectTimer);
-      connectTimer = null;
-    }
-    stopHeartbeat();
-    if (ws) {
-      ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
-      try {
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
-      } catch (_) {}
-      ws = null;
-    }
-    connected = false;
-    updateConn();
-  }
-
-  function startHeartbeat() {
-    stopHeartbeat();
-    pingTimer = setInterval(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        try { ws.send(JSON.stringify({ type: "ping" })); } catch (_) {}
-      }
-    }, 12000);
-  }
-
-  function stopHeartbeat() {
-    if (pingTimer) {
-      clearInterval(pingTimer);
-      pingTimer = null;
+  function handleServerMessage(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.type === "status") {
+      if (msg.hostname) hostname = msg.hostname;
+      if (msg.trusted === false) toastMsg("MANCA PERMESSO ACCESSIBILITÀ SUL MAC");
+      updateConn();
     }
   }
 
   function connect() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-    connectingSince = performance.now();
-    const socket = new WebSocket(`wss://${location.host}`);
-    ws = socket;
-    socket.onopen = () => {
-      if (ws !== socket) return;
+    if (es) return;
+    const src = new EventSource("api/events");
+    es = src;
+    src.onopen = () => {
+      if (es !== src) return;
       connected = true;
       hasEverConnected = true;
-      connectingSince = 0;
-      lastHealthyAt = performance.now();
-      lastPongAt = performance.now();
+      lastEventAt = performance.now();
+      disconnectedSince = 0;
       lastError = "";
       closeInfo = "";
       attempts = 0;
-      startHeartbeat();
       updateConn();
     };
-    socket.onclose = (ev) => {
-      if (ws !== socket) return;
-      ws = null;
+    src.onmessage = (ev) => {
+      if (es !== src) return;
+      lastEventAt = performance.now();
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+      handleServerMessage(msg);
+    };
+    src.onerror = () => {
+      if (es !== src) return;
+      if (connected) attempts++;
       connected = false;
-      stopHeartbeat();
-      attempts++;
-      closeInfo = `${ev.code}${ev.code === 1006 ? " (anomala: TLS/rete)" : ""}${ev.reason ? " " + ev.reason : ""}`;
+      closeInfo = "flusso SSE interrotto";
+      if (!disconnectedSince) disconnectedSince = performance.now();
       updateConn();
-      scheduleReconnect(900);
-    };
-    socket.onerror = () => {
-      lastError = "errore WebSocket";
-      try { socket.close(); } catch (_) {}
-    };
-    socket.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "pong") {
-          lastPongAt = performance.now();
-          return;
-        }
-        if (msg.type === "status") {
-          if (msg.hostname) hostname = msg.hostname;
-          if (msg.trusted === false) toastMsg("MANCA PERMESSO ACCESSIBILITÀ SUL MAC");
-          updateConn();
-        }
-      } catch (_) {}
+      // EventSource ritenta da solo; il watchdog interviene se resta fermo.
     };
   }
+
+  function reconnect() {
+    if (es) {
+      try { es.close(); } catch (_) {}
+      es = null;
+    }
+    connect();
+  }
+
+  function enqueue(obj) {
+    if (obj.type === "move") {
+      const last = outbox[outbox.length - 1];
+      if (last && last.type === "move") outbox[outbox.length - 1] = obj;
+      else outbox.push(obj);
+    } else {
+      outbox.push(obj);
+    }
+    scheduleFlush(0);
+  }
+
+  function scheduleFlush(delay) {
+    if (flushTimer || flushing || !outbox.length) return;
+    const wait = Math.max(delay || 0, 12 - (performance.now() - lastFlushAt));
+    flushTimer = setTimeout(flush, wait);
+  }
+
+  async function flush() {
+    flushTimer = null;
+    if (flushing || !outbox.length) return;
+    flushing = true;
+    lastFlushAt = performance.now();
+    const batch = outbox;
+    outbox = [];
+    try {
+      const res = await fetch("api/input", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(batch),
+        cache: "no-store",
+        keepalive: true,
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      lastEventAt = performance.now();
+      if (!connected) {
+        connected = true;
+        hasEverConnected = true;
+        disconnectedSince = 0;
+        lastError = "";
+        closeInfo = "";
+        updateConn();
+      }
+    } catch (err) {
+      lastError = "invio fallito";
+      for (let i = batch.length - 1; i >= 0; i--) {
+        if (batch[i].type !== "move") outbox.unshift(batch[i]);
+      }
+      if (connected) attempts++;
+      connected = false;
+      if (!disconnectedSince) disconnectedSince = performance.now();
+      updateConn();
+    } finally {
+      flushing = false;
+    }
+    if (outbox.length) scheduleFlush(0);
+  }
+
   connect();
 
-  // ciclo di vita: NON chiudiamo più il socket su pagehide/visibilitychange
-  // (il browser lo chiude da solo in navigazione e i teardown causavano churn).
-  // Al ritorno in primo piano ci limitiamo a riconnettere se serve.
+  // ciclo di vita: EventSource si riconnette da solo; quando torniamo in primo
+  // piano rilanciamo la connessione se serve.
   window.addEventListener("pageshow", () => connect());
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
-    if (!connected) {
-      connect();
-      return;
-    }
-    // socket "zombie": aperto ma senza risposte da troppo tempo
-    if (performance.now() - lastPongAt > 20000) {
-      teardownSocket();
-      connect();
-    }
+    if (!connected) reconnect();
+    else if (performance.now() - lastEventAt > 20000) reconnect();
   });
 
-  // watchdog: iOS può lasciare il socket bloccato in CONNECTING o "morto"
-  // senza scatenare onclose; qui lo riprendiamo o ne apriamo uno nuovo.
+  // watchdog: iOS può sospendere il flusso SSE senza avvisare; qui lo riapriamo
+  // e, se davvero non si riprende, ricarichiamo una volta l'app.
   setInterval(() => {
     const now = performance.now();
     updateDiag(connected && powerOn);
-    if (connected) {
-      lastHealthyAt = now;
-      // zombie: aperto ma nessun pong da 30s -> rianima la connessione
-      if (now - lastPongAt > 30000) {
-        teardownSocket();
-        connect();
-      }
+    if (!es) {
+      connect();
       return;
     }
-    if (ws && ws.readyState === WebSocket.CONNECTING) {
-      if (now - connectingSince > 6000) {
-        try { ws.close(); } catch (_) {}
-        ws = null;
-        scheduleReconnect(0);
-      }
+    if (connected && now - lastEventAt > 30000) {
+      reconnect();
       return;
     }
-    if (!ws || ws.readyState === WebSocket.CLOSED) {
-      scheduleReconnect(0);
-    }
-    if (hasEverConnected && now - lastHealthyAt > 20000 && now - lastHardReloadAt > 20000) {
-      lastHardReloadAt = now;
-      hardReload();
+    if (!connected) {
+      if (!disconnectedSince) disconnectedSince = now;
+      if (hasEverConnected && now - disconnectedSince > 20000 && now - lastHardReloadAt > 20000) {
+        lastHardReloadAt = now;
+        hardReload();
+      }
     }
   }, 3000);
 
