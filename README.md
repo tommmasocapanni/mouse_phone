@@ -51,6 +51,7 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 | Pad · 2 dita | Scroll |
 | Pad · tap 2 dita | Click destro |
 | Pad · swipe 3 dita ←/→ | Cambia scrivania sul Mac |
+| Scuoti l'iPhone | Alert di conferma → invia **⌘W** (chiude la tab del browser) |
 | Trascina giù (fuori dal pad) | Pull-to-refresh della web app |
 | ⏻ | Accende/spegne il puntatore |
 | ⌄ | Apre il pannello (testo, media, opzioni) |
@@ -60,6 +61,10 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 > macOS può chiedere di consentire al terminale di controllare **System Events**
 > (Impostazioni → Privacy e sicurezza → Automazione) e serve il permesso
 > **Accessibilità** già richiesto per muovere il cursore.
+>
+> Lo **shake** usa l'accelerometro (`DeviceMotion`): al primo tocco la web app
+> chiede il permesso "Movimento e orientamento". Scuotendo l'iPhone compare un
+> alert **ANNULLA / CONFERMA**; confermando viene inviato **⌘W** al Mac.
 
 ## Struttura
 

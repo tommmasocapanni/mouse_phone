@@ -491,6 +491,69 @@ body {
 
 .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
+/* --- conferma (shake -> chiudi tab) --- */
+.confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(20, 20, 20, .34);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  transition: opacity .18s;
+}
+
+.confirm[hidden] { display: none; }
+.confirm.show { opacity: 1; }
+
+.confirm-box {
+  width: min(100%, 300px);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: 0 20px 60px #0003;
+  padding: 22px 20px 16px;
+  text-align: center;
+  transform: scale(.96);
+  transition: transform .18s;
+}
+
+.confirm.show .confirm-box { transform: scale(1); }
+
+.confirm-title {
+  font-size: 12px;
+  letter-spacing: .1em;
+  margin-bottom: 8px;
+}
+
+.confirm-text {
+  font-size: 10px;
+  color: var(--mid);
+  line-height: 1.5;
+  margin-bottom: 18px;
+}
+
+.confirm-actions { display: flex; gap: 10px; }
+
+.confirm-btn {
+  flex: 1;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: #666;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: .1em;
+  cursor: pointer;
+}
+
+.confirm-btn.ok { background: #1d1d1d; border-color: #1d1d1d; color: #fff; }
+.confirm-btn:active { transform: scale(.96); }
+
 /* --- diagnostica (solo quando disconnesso) --- */
 .diag {
   position: fixed;

@@ -11,7 +11,7 @@
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=17">
+  <link rel="stylesheet" href="style.css?v=18">
 </head>
 <body>
 <main class="phone">
@@ -23,7 +23,7 @@
       <button class="connection" id="connection">
         <span class="led" id="led"></span>
         <span class="conntexts">
-          <strong id="device">MOUSE_PHONE / MAC · v17</strong>
+          <strong id="device">MOUSE_PHONE / MAC · v18</strong>
           <small id="statusText">○ CONNECTING</small>
         </span>
         <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
@@ -113,6 +113,17 @@
     </section>
   </div>
 
+  <div class="confirm" id="confirm" role="dialog" aria-modal="true" hidden>
+    <div class="confirm-box">
+      <div class="confirm-title">CHIUDERE LA TAB?</div>
+      <div class="confirm-text">Scuotendo l'iPhone invii &#8984;W al Mac.</div>
+      <div class="confirm-actions">
+        <button class="confirm-btn cancel" id="confirmCancel">ANNULLA</button>
+        <button class="confirm-btn ok" id="confirmOk">CONFERMA</button>
+      </div>
+    </div>
+  </div>
+
   <div class="ptr" id="ptr" aria-hidden="true">
     <div class="ptr-ring"></div>
     <span class="ptr-label" id="ptrLabel">TRASCINA PER AGGIORNARE</span>
@@ -121,6 +132,6 @@
   <div class="toast" id="toast">READY</div>
   <div class="diag" id="diag" aria-hidden="true"></div>
 </main>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

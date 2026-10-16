@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v17";
+  const BUILD = "v18";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -13,6 +13,9 @@
   const SCROLL_DIV = 1.25;
   const SWIPE_DIST = 55;
   const SWIPE_RATIO = 1.5;
+  const SHAKE_DELTA = 27;
+  const SHAKE_WINDOW = 700;
+  const SHAKE_COOLDOWN = 1200;
 
   // pulisce eventuali query di cache-busting (?r=...) dall'URL, così la barra
   // resta pulita e l'icona salvata su Home non memorizza il parametro.
@@ -44,6 +47,9 @@
   const invYBtn = $("invY");
   const ptr = $("ptr");
   const ptrLabel = $("ptrLabel");
+  const confirmEl = $("confirm");
+  const confirmOk = $("confirmOk");
+  const confirmCancel = $("confirmCancel");
 
   const settings = Object.assign(
     { sens: 50, precision: false, invX: false, invY: false },
@@ -54,6 +60,7 @@
   let connected = false;
   let powerOn = true;
   let sensorsOn = false;
+  let motionOn = false;
   let calib = null;
   let cur = null;
   let pos = { x: 0.5, y: 0.5 };
@@ -75,6 +82,9 @@
   let attempts = 0;
   let edgeX = 0;
   let edgeY = 0;
+  let shakePrev = null;
+  let shakeAt = -1e9;
+  let joltTimes = [];
 
   // ---------- filtro One Euro (con supporto angoli) ----------
   class OneEuro {
@@ -412,7 +422,55 @@
       }
       window.addEventListener("deviceorientation", onOrientation);
       sensorsOn = true;
+
+      // accelerometro -> shake (chiudi la tab)
+      if (typeof DeviceMotionEvent !== "undefined" && !motionOn) {
+        if (typeof DeviceMotionEvent.requestPermission === "function") {
+          let r = "granted";
+          try { r = await DeviceMotionEvent.requestPermission(); } catch (_) {}
+          if (r === "granted") { window.addEventListener("devicemotion", onMotion); motionOn = true; }
+        } else {
+          window.addEventListener("devicemotion", onMotion);
+          motionOn = true;
+        }
+      }
     } catch (_) {}
+  }
+
+  // shake: due scossoni ravvicinati -> alert di conferma
+  function onMotion(e) {
+    if (!powerOn || !confirmEl.hidden) {
+      shakePrev = null;
+      return;
+    }
+    const a = e.accelerationIncludingGravity || e.acceleration;
+    if (!a || a.x == null) return;
+    const now = performance.now();
+    if (!shakePrev) { shakePrev = { x: a.x, y: a.y, z: a.z }; return; }
+    const delta =
+      Math.abs(a.x - shakePrev.x) + Math.abs(a.y - shakePrev.y) + Math.abs(a.z - shakePrev.z);
+    shakePrev = { x: a.x, y: a.y, z: a.z };
+    if (delta > SHAKE_DELTA) {
+      joltTimes.push(now);
+      joltTimes = joltTimes.filter((t) => now - t < SHAKE_WINDOW);
+      if (joltTimes.length >= 2 && now - shakeAt > SHAKE_COOLDOWN) {
+        shakeAt = now;
+        joltTimes = [];
+        openConfirm();
+      }
+    }
+  }
+
+  function openConfirm() {
+    if (!confirmEl.hidden) return;
+    confirmEl.hidden = false;
+    requestAnimationFrame(() => confirmEl.classList.add("show"));
+    hapticTick();
+  }
+
+  function closeConfirm() {
+    confirmEl.classList.remove("show");
+    setTimeout(() => { confirmEl.hidden = true; }, 180);
   }
 
   function edgeCheck() {
@@ -908,6 +966,21 @@
       hapticTick();
     });
   });
+
+  // ---------- conferma (shake -> chiudi tab) ----------
+  confirmCancel.addEventListener("click", closeConfirm);
+  confirmOk.addEventListener("click", () => {
+    closeConfirm();
+    send({ type: "key", key: "w", command: true });
+    toastMsg("TAB CHIUSA");
+    hapticTick();
+  });
+  confirmEl.addEventListener("click", (e) => {
+    if (e.target === confirmEl) closeConfirm();
+  });
+
+  // primo tocco ovunque: chiedi i permessi sensori (serve un gesto utente)
+  document.addEventListener("pointerdown", ensureSensors, { once: true });
 
   // ---------- dettatura ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
