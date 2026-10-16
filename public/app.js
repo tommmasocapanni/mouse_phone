@@ -2,6 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
+  const BUILD = "v10";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -11,12 +12,19 @@
   const TAP_MS = 320;
   const SCROLL_DIV = 2.5;
 
+  // pulisce eventuali query di cache-busting (?r=...) dall'URL, così la barra
+  // resta pulita e l'icona salvata su Home non memorizza il parametro.
+  if (location.search) {
+    try { history.replaceState(null, "", location.pathname); } catch (_) {}
+  }
+
   const $ = (id) => document.getElementById(id);
   const pad = $("trackpad");
   const canvas = $("dotcanvas");
   const range = $("sensitivity");
   const value = $("sensitivityValue");
   const toastEl = $("toast");
+  const diagEl = $("diag");
   const cal = $("calibrate");
   const powerBtn = $("power");
   const conn = $("connection");
@@ -32,7 +40,6 @@
   const precisionBtn = $("precision");
   const invXBtn = $("invX");
   const invYBtn = $("invY");
-  const clock = $("clock");
   const ptr = $("ptr");
   const ptrLabel = $("ptrLabel");
 
@@ -53,6 +60,16 @@
   let anchored = false;
   let sheetOpen = false;
   let toastTimer = null;
+  let connectTimer = null;
+  let connectingSince = 0;
+  let lastHealthyAt = performance.now();
+  let lastPongAt = 0;
+  let pingTimer = null;
+  let hasEverConnected = false;
+  let lastHardReloadAt = 0;
+  let lastError = "";
+  let closeInfo = "";
+  let attempts = 0;
   let edgeX = 0;
   let edgeY = 0;
 
@@ -147,24 +164,117 @@
     const up = connected && powerOn;
     conn.classList.toggle("off", !up);
     statusText.textContent = up ? "● CONNECTED" : "○ DISCONNECTED";
-    if (hostname) device.textContent = `MOUSE_PHONE / ${hostname.toUpperCase()}`;
+    if (hostname) device.textContent = `MOUSE_PHONE / ${hostname.toUpperCase()} · ${BUILD}`;
+    updateDiag(up);
+  }
+
+  function updateDiag(up) {
+    if (!diagEl) return;
+    const standalone = !!window.navigator.standalone;
+    if (up || (!standalone && attempts < 1)) {
+      diagEl.classList.remove("show");
+      return;
+    }
+    const mode = standalone ? "WEBAPP" : "SAFARI";
+    const rs = ws ? ws.readyState : -1;
+    const rsName = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"][rs] || "none";
+    const hint = standalone ? " · rimuovi l'icona e ri-aggiungila SENZA 'Apri come app web'" : "";
+    diagEl.textContent =
+      `${BUILD} ${mode} · ${location.origin} · ws:${rsName} · err:${lastError || "-"} · close:${closeInfo || "-"} · tent#${attempts}${hint}`;
+    diagEl.classList.add("show");
   }
 
   // ---------- WebSocket ----------
+  function hardReload() {
+    try {
+      location.reload();
+    } catch (_) {
+      const u = new URL(location.href);
+      u.searchParams.set("r", Date.now());
+      location.replace(u.toString());
+    }
+  }
+
+  function scheduleReconnect(delay) {
+    if (connectTimer) return;
+    connectTimer = setTimeout(() => {
+      connectTimer = null;
+      connect();
+    }, delay);
+  }
+
+  function teardownSocket() {
+    if (connectTimer) {
+      clearTimeout(connectTimer);
+      connectTimer = null;
+    }
+    stopHeartbeat();
+    if (ws) {
+      ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+      try {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      } catch (_) {}
+      ws = null;
+    }
+    connected = false;
+    updateConn();
+  }
+
+  function startHeartbeat() {
+    stopHeartbeat();
+    pingTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: "ping" })); } catch (_) {}
+      }
+    }, 12000);
+  }
+
+  function stopHeartbeat() {
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+  }
+
   function connect() {
-    ws = new WebSocket(`wss://${location.host}`);
-    ws.onopen = () => {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    connectingSince = performance.now();
+    const socket = new WebSocket(`wss://${location.host}`);
+    ws = socket;
+    socket.onopen = () => {
+      if (ws !== socket) return;
       connected = true;
+      hasEverConnected = true;
+      connectingSince = 0;
+      lastHealthyAt = performance.now();
+      lastPongAt = performance.now();
+      lastError = "";
+      closeInfo = "";
+      attempts = 0;
+      startHeartbeat();
       updateConn();
     };
-    ws.onclose = () => {
+    socket.onclose = (ev) => {
+      if (ws !== socket) return;
+      ws = null;
       connected = false;
+      stopHeartbeat();
+      attempts++;
+      closeInfo = `${ev.code}${ev.code === 1006 ? " (anomala: TLS/rete)" : ""}${ev.reason ? " " + ev.reason : ""}`;
       updateConn();
-      setTimeout(connect, 900);
+      scheduleReconnect(900);
     };
-    ws.onmessage = (ev) => {
+    socket.onerror = () => {
+      lastError = "errore WebSocket";
+      try { socket.close(); } catch (_) {}
+    };
+    socket.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
+        if (msg.type === "pong") {
+          lastPongAt = performance.now();
+          return;
+        }
         if (msg.type === "status") {
           if (msg.hostname) hostname = msg.hostname;
           if (msg.trusted === false) toastMsg("MANCA PERMESSO ACCESSIBILITÀ SUL MAC");
@@ -174,6 +284,55 @@
     };
   }
   connect();
+
+  // ciclo di vita: NON chiudiamo più il socket su pagehide/visibilitychange
+  // (il browser lo chiude da solo in navigazione e i teardown causavano churn).
+  // Al ritorno in primo piano ci limitiamo a riconnettere se serve.
+  window.addEventListener("pageshow", () => connect());
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    if (!connected) {
+      connect();
+      return;
+    }
+    // socket "zombie": aperto ma senza risposte da troppo tempo
+    if (performance.now() - lastPongAt > 20000) {
+      teardownSocket();
+      connect();
+    }
+  });
+
+  // watchdog: iOS può lasciare il socket bloccato in CONNECTING o "morto"
+  // senza scatenare onclose; qui lo riprendiamo o ne apriamo uno nuovo.
+  setInterval(() => {
+    const now = performance.now();
+    updateDiag(connected && powerOn);
+    if (connected) {
+      lastHealthyAt = now;
+      // zombie: aperto ma nessun pong da 30s -> rianima la connessione
+      if (now - lastPongAt > 30000) {
+        teardownSocket();
+        connect();
+      }
+      return;
+    }
+    if (ws && ws.readyState === WebSocket.CONNECTING) {
+      if (now - connectingSince > 6000) {
+        try { ws.close(); } catch (_) {}
+        ws = null;
+        scheduleReconnect(0);
+      }
+      return;
+    }
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      scheduleReconnect(0);
+    }
+    if (hasEverConnected && now - lastHealthyAt > 20000 && now - lastHardReloadAt > 20000) {
+      lastHardReloadAt = now;
+      hardReload();
+    }
+  }, 3000);
+
 
   // ---------- haptics ----------
   const hapticOK = (() => {
@@ -602,7 +761,12 @@
     toggleSheet(false);
   });
   conn.addEventListener("click", () => {
-    toastMsg(connected && powerOn ? `CONNECTED TO ${hostname || "MAC"}` : "NO DEVICE CONNECTED");
+    if (!connected || !powerOn) {
+      toastMsg("RICONNESSIONE…");
+      hardReload();
+      return;
+    }
+    toastMsg(`CONNECTED TO ${hostname || "MAC"}`);
   });
 
   // ---------- tastiera ----------
@@ -709,11 +873,6 @@
     save();
   });
 
-  // ---------- orologio ----------
-  function tick() {
-    clock.textContent = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
-  }
-
   // ---------- pull to refresh ----------
   const PTR_THRESHOLD = 78;
   const PTR_MAX = PTR_THRESHOLD * 1.7;
@@ -790,7 +949,7 @@
       ptr.style.transform = "translateY(30px)";
       ptrLabel.textContent = "RICARICO…";
       suppressClickUntil = performance.now() + 900;
-      setTimeout(() => location.reload(), 220);
+      setTimeout(hardReload, 220);
       return;
     }
     if (ptrActive) {
@@ -822,8 +981,6 @@
   paintChips();
   updateMode();
   updateConn();
-  tick();
-  setInterval(tick, 15000);
 
   document.addEventListener("gesturestart", (e) => e.preventDefault());
   document.addEventListener("dblclick", (e) => e.preventDefault());

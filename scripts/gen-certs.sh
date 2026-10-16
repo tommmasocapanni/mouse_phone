@@ -43,7 +43,7 @@ EOF
 
 openssl x509 -req -in "$CERTS/server.csr" \
   -CA "$CERTS/rootCA.pem" -CAkey "$CERTS/rootCA-key.pem" -CAcreateserial \
-  -days 825 -sha256 -extfile "$CERTS/openssl.ext" \
+  -days 397 -sha256 -extfile "$CERTS/openssl.ext" \
   -out "$CERTS/leaf.pem" 2>/dev/null
 
 # catena: leaf + CA (il server serve la catena completa)

@@ -94,7 +94,10 @@ div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacin
         res.writeHead(404).end("not found");
         return;
       }
-      res.writeHead(200, { "Content-Type": MIME[path.extname(full)] || "application/octet-stream" });
+      res.writeHead(200, {
+        "Content-Type": MIME[path.extname(full)] || "application/octet-stream",
+        "Cache-Control": "no-store, must-revalidate",
+      });
       res.end(data);
     });
   }
@@ -148,6 +151,21 @@ function sendHelper(obj) {
 // --- WebSocket ---
 const wss = new WebSocketServer({ server });
 
+// heartbeat: chiude i socket "zombie" che iOS lascia aperti a livello applicativo
+// ma sono morti a livello di rete.
+const PING_MS = 25000;
+const heartbeat = setInterval(() => {
+  for (const c of wss.clients) {
+    if (c.isAlive === false) {
+      try { c.terminate(); } catch (_) {}
+      continue;
+    }
+    c.isAlive = false;
+    try { c.ping(); } catch (_) {}
+  }
+}, PING_MS);
+wss.on("close", () => clearInterval(heartbeat));
+
 function broadcastStatus() {
   const data = JSON.stringify({
     type: "status",
@@ -162,6 +180,8 @@ const MEDIA_KEYS = ["volup", "voldown", "mute", "play", "next", "prev"];
 
 wss.on("connection", (ws, req) => {
   const ip = (req.socket.remoteAddress || "?").replace("::ffff:", "");
+  ws.isAlive = true;
+  ws.on("pong", () => { ws.isAlive = true; });
   ws.send(JSON.stringify({
     type: "status",
     trusted: helperTrusted,
@@ -184,6 +204,9 @@ wss.on("connection", (ws, req) => {
       return;
     }
     switch (msg.type) {
+      case "ping":
+        ws.send(JSON.stringify({ type: "pong" }));
+        break;
       case "move":
         sendHelper({ cmd: "move", x: msg.x, y: msg.y });
         break;

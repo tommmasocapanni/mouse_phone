@@ -4,21 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <meta http-equiv="Pragma" content="no-cache">
   <meta name="apple-mobile-web-app-title" content="dot.">
   <meta name="theme-color" content="#fbfbfa">
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
 <main class="phone">
   <div class="shell">
-    <header class="status">
-      <span id="clock">9:41</span>
-      <span class="sysicons">● ◕ ▰</span>
-    </header>
-
     <section class="top">
       <button class="power" id="power" aria-label="Accendi o spegni connessione">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v10M5.6 5.6a9 9 0 1 0 12.8 0"/></svg>
@@ -26,7 +23,7 @@
       <button class="connection" id="connection">
         <span class="led" id="led"></span>
         <span class="conntexts">
-          <strong id="device">MOUSE_PHONE / MAC</strong>
+          <strong id="device">MOUSE_PHONE / MAC · v10</strong>
           <small id="statusText">○ CONNECTING</small>
         </span>
         <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
@@ -122,7 +119,8 @@
   </div>
 
   <div class="toast" id="toast">READY</div>
+  <div class="diag" id="diag" aria-hidden="true"></div>
 </main>
-<script src="app.js"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
