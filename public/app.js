@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v15";
+  const BUILD = "v17";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -10,7 +10,7 @@
   const LONG_PRESS_MS = 350;
   const TAP_DIST = 12;
   const TAP_MS = 320;
-  const SCROLL_DIV = 2.5;
+  const SCROLL_DIV = 1.25;
   const SWIPE_DIST = 55;
   const SWIPE_RATIO = 1.5;
 
@@ -595,6 +595,36 @@
   let padCentroid = null;
   let twoFinger = null;
   let threeFinger = null;
+  let scrollVelX = 0;
+  let scrollVelY = 0;
+  let scrollLastAt = 0;
+  let momentumRaf = null;
+
+  // inerzia dello scroll (momentum) dopo il rilascio delle due dita
+  function stopMomentum() {
+    if (momentumRaf) cancelAnimationFrame(momentumRaf);
+    momentumRaf = null;
+    scrollVelX = 0;
+    scrollVelY = 0;
+  }
+
+  function startMomentum() {
+    if (performance.now() - scrollLastAt > 140) return;
+    let mvx = scrollVelX * 0.016;
+    let mvy = scrollVelY * 0.016;
+    if (Math.hypot(mvx, mvy) < 0.6) return;
+    const step = () => {
+      send({ type: "scroll", dx: mvx, dy: mvy });
+      mvx *= 0.94;
+      mvy *= 0.94;
+      if (Math.abs(mvx) < 0.5 && Math.abs(mvy) < 0.5) {
+        momentumRaf = null;
+        return;
+      }
+      momentumRaf = requestAnimationFrame(step);
+    };
+    momentumRaf = requestAnimationFrame(step);
+  }
 
   function padPos(e) {
     const r = pad.getBoundingClientRect();
@@ -622,6 +652,7 @@
 
   pad.addEventListener("pointerdown", (e) => {
     if (!powerOn) return;
+    stopMomentum();
     ensureSensors();
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.size === 1) trail = [];
@@ -719,8 +750,16 @@
       const canScroll = !twoFinger || twoFinger.moved;
       if (padCentroid && canScroll) {
         const k = sensMult() / SCROLL_DIV;
+        const now = performance.now();
+        const dt = Math.max(1, now - (scrollLastAt || now - 16));
         // direzione invertita rispetto al trascinamento (scorrimento "naturale")
-        send({ type: "scroll", dx: -(cx - padCentroid.x) * k, dy: -(cy - padCentroid.y) * k });
+        const dxs = -(cx - padCentroid.x) * k;
+        const dys = -(cy - padCentroid.y) * k;
+        // stima velocità (px/s) per l'inerzia, con smoothing
+        scrollVelX = scrollVelX * 0.6 + (dxs / dt) * 1000 * 0.4;
+        scrollVelY = scrollVelY * 0.6 + (dys / dt) * 1000 * 0.4;
+        scrollLastAt = now;
+        send({ type: "scroll", dx: dxs, dy: dys });
       }
       padCentroid = { x: cx, y: cy };
     }
@@ -742,6 +781,8 @@
       hapticTick();
       toastMsg("RIGHT CLICK");
     }
+    // fine dello scroll a due dita -> avvia l'inerzia
+    if (twoFinger && before === 2 && twoFinger.moved) startMomentum();
     if (pointers.size < 2) twoFinger = null;
     if (pointers.size < 3) threeFinger = null;
 
@@ -779,6 +820,7 @@
     if (!powerOn) {
       clearPress();
       pointers.clear();
+      stopMomentum();
       twoFinger = null;
       threeFinger = null;
       anchored = false;
