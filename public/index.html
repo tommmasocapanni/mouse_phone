@@ -39,9 +39,7 @@
     </div>
 
     <div class="trackpad" id="trackpad" aria-label="Area gesture per muovere il cursore">
-      <div class="dots"></div>
-      <div class="glow" id="glow"></div>
-      <div class="cross" id="cross"></div>
+      <canvas class="dotcanvas" id="dotcanvas" aria-hidden="true"></canvas>
       <div class="hint">SWIPE TO MOVE · TAP TO CLICK</div>
     </div>
 
@@ -116,6 +114,11 @@
         <button class="chip" id="invY">INVERT Y</button>
       </div>
     </section>
+  </div>
+
+  <div class="ptr" id="ptr" aria-hidden="true">
+    <div class="ptr-ring"></div>
+    <span class="ptr-label" id="ptrLabel">TRASCINA PER AGGIORNARE</span>
   </div>
 
   <div class="toast" id="toast">READY</div>

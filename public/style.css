@@ -167,33 +167,13 @@ body {
   isolation: isolate;
 }
 
-.dots {
+.dotcanvas {
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(circle, #b8b8b8 1.45px, transparent 1.65px);
-  background-size: 19px 19px;
-  background-position: center;
-  opacity: .75;
-}
-
-.glow {
-  position: absolute;
-  width: 230px;
-  height: 230px;
-  left: 0;
-  top: 0;
-  border-radius: 50%;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
-  opacity: 0;
-  transform: translate(-50%, -50%);
-  background: radial-gradient(circle, #ff525f73 0%, #fa99495c 23%, #e1bcff55 47%, #a5dbff30 60%, transparent 72%);
-  filter: blur(3px);
-  mix-blend-mode: multiply;
-  transition: opacity .24s, width .17s, height .17s;
-  z-index: 1;
 }
-
-.trackpad.active .glow { opacity: 1; }
 
 .trackpad:after {
   content: '';
@@ -202,27 +182,6 @@ body {
   pointer-events: none;
   background: linear-gradient(180deg, var(--paper) 0%, transparent 7%, transparent 94%, var(--paper) 100%);
 }
-
-.cross {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  z-index: 2;
-}
-
-.cross:before, .cross:after {
-  content: '';
-  position: absolute;
-  background: #242424;
-}
-
-.cross:before { width: 1px; height: 16px; left: 7px; }
-.cross:after { height: 1px; width: 16px; top: 7px; }
-
-.trackpad.active .cross { opacity: .65; }
 
 .hint {
   position: absolute;
@@ -237,7 +196,16 @@ body {
   z-index: 2;
 }
 
-.trackpad.edgeflash { animation: edgeflash .3s ease; }
+.trackpad:before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  border-radius: inherit;
+}
+
+.trackpad.edgeflash:before { animation: edgeflash .3s ease; }
 
 @keyframes edgeflash {
   0% { box-shadow: inset 0 0 0 0 #ed473c00; }
@@ -453,6 +421,43 @@ body {
   border-color: #1d1d1d;
   color: #fff;
 }
+
+/* --- pull to refresh --- */
+.ptr {
+  position: absolute;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  pointer-events: none;
+  z-index: 30;
+  opacity: 0;
+  transform: translateY(-70px);
+  transition: transform .25s ease, opacity .25s ease;
+}
+
+.ptr-ring {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid #e0e0e0;
+  border-top-color: #1d1d1d;
+  background: #fff;
+  box-shadow: 0 4px 14px #00000014;
+}
+
+.ptr-label {
+  font-size: 9px;
+  letter-spacing: .12em;
+  color: #8c8c8c;
+}
+
+.ptr.ready .ptr-ring { border-top-color: var(--red); }
+.ptr.ready .ptr-label { color: var(--red); }
+.ptr.loading .ptr-ring { animation: spin .7s linear infinite; }
 
 /* --- toast --- */
 .toast {

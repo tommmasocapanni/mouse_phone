@@ -1,18 +1,43 @@
 const https = require("https");
+const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { spawn } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const { WebSocketServer } = require("ws");
 const QRCode = require("qrcode");
 
 const PORT = Number(process.env.PORT || 8443);
+const CA_PORT = Number(process.env.CA_PORT || 8080);
 const ROOT = __dirname;
 const PUB = path.join(ROOT, "public");
 const CERTS = path.join(ROOT, "certs");
 const HELPER = path.join(ROOT, "cursor", "cursor_helper");
 const HOSTNAME = os.hostname();
-const JOIN_URL = `https://${HOSTNAME}.local:${PORT}`;
+
+function lanAddresses() {
+  const out = [];
+  for (const [, addrs] of Object.entries(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a.family === "IPv4" && !a.internal) out.push(a.address);
+    }
+  }
+  return out;
+}
+
+function bonjourName() {
+  try {
+    const name = execSync("scutil --get LocalHostName", { encoding: "utf8" }).trim();
+    if (name) return name;
+  } catch (_) {}
+  return HOSTNAME.split(".")[0];
+}
+
+const LAN_IP = lanAddresses()[0] || "127.0.0.1";
+const BONJOUR = bonjourName();
+const JOIN_URL = `https://${LAN_IP}:${PORT}`;
+const LOCAL_URL = `https://${BONJOUR}.local:${PORT}`;
 
 if (!fs.existsSync(path.join(CERTS, "cert.pem")) || !fs.existsSync(path.join(CERTS, "key.pem"))) {
   console.error("Certificati mancanti: esegui `npm run certs`");
@@ -48,8 +73,8 @@ const server = https.createServer(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>dot. — join</title>
 <style>body{font-family:ui-monospace,monospace;background:#fbfbfa;color:#191919;display:grid;place-items:center;min-height:100dvh;margin:0}
-div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacing:.14em;color:#888;margin-top:18px}small{font-size:9px;color:#bbb}</style>
-</head><body><div><img src="${dataURL}" alt="QR"><p>SCANSANA CON L'IPHONE</p><small>${JOIN_URL}</small></div></body></html>`;
+div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacing:.14em;color:#888;margin-top:18px}small{font-size:9px;color:#bbb}a{color:#191919}</style>
+</head><body><div><img src="${dataURL}" alt="QR"><p>SCANSANA CON L'IPHONE</p><small><a href="${JOIN_URL}">${JOIN_URL}</a></small><br><small>${LOCAL_URL}</small></div></body></html>`;
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(html);
       } catch (err) {
@@ -128,22 +153,29 @@ function broadcastStatus() {
     type: "status",
     trusted: helperTrusted,
     display: helperDisplay,
-    hostname: HOSTNAME,
+    hostname: BONJOUR,
   });
   for (const c of wss.clients) if (c.readyState === 1) c.send(data);
 }
 
 const MEDIA_KEYS = ["volup", "voldown", "mute", "play", "next", "prev"];
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  const ip = (req.socket.remoteAddress || "?").replace("::ffff:", "");
   ws.send(JSON.stringify({
     type: "status",
     trusted: helperTrusted,
     display: helperDisplay,
-    hostname: HOSTNAME,
+    hostname: BONJOUR,
   }));
-  console.log("client connesso");
-  ws.on("close", () => console.log("client disconnesso"));
+  console.log(`client connesso da ${ip}`);
+  ws.on("close", (code, reason) => {
+    const why = reason && reason.length ? `, "${reason.toString()}"` : "";
+    console.log(`client disconnesso da ${ip} (code ${code}${why})`);
+  });
+  ws.on("error", (err) => {
+    console.log(`client error da ${ip}: ${err.message}`);
+  });
   ws.on("message", (raw) => {
     let msg;
     try {
@@ -182,23 +214,88 @@ wss.on("connection", (ws) => {
   });
 });
 
-// --- avvio ---
-function lanAddresses() {
-  const out = [];
-  for (const [, addrs] of Object.entries(os.networkInterfaces())) {
-    for (const a of addrs || []) {
-      if (a.family === "IPv4" && !a.internal) out.push(a.address);
-    }
-  }
-  return out;
+// --- server HTTP per installare la CA (una tantum sull'iPhone) ---
+const CA_PATH = path.join(CERTS, "rootCA.pem");
+
+function mobileConfig(pem) {
+  const b64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  const uuid = () => crypto.randomUUID().toUpperCase();
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadCertificateFileName</key><string>rootCA.pem</string>
+      <key>PayloadContent</key><data>${b64}</data>
+      <key>PayloadDescription</key><string>CA locale per mouse_phone</string>
+      <key>PayloadDisplayName</key><string>mouse_phone Local CA</string>
+      <key>PayloadIdentifier</key><string>local.mousephone.rootca</string>
+      <key>PayloadType</key><string>com.apple.security.root</string>
+      <key>PayloadUUID</key><string>${uuid()}</string>
+      <key>PayloadVersion</key><integer>1</integer>
+    </dict>
+  </array>
+  <key>PayloadDisplayName</key><string>mouse_phone Local CA</string>
+  <key>PayloadIdentifier</key><string>local.mousephone.profile</string>
+  <key>PayloadRemovalDisallowed</key><false/>
+  <key>PayloadType</key><string>Configuration</string>
+  <key>PayloadUUID</key><string>${uuid()}</string>
+  <key>PayloadVersion</key><integer>1</integer>
+</dict>
+</plist>`;
 }
 
+function startCaServer() {
+  if (!fs.existsSync(CA_PATH)) return;
+  const caPem = fs.readFileSync(CA_PATH, "utf8");
+  const caServer = http.createServer((req, res) => {
+    const url = new URL(req.url, "http://localhost");
+    if (url.pathname === "/ca.mobileconfig") {
+      res.writeHead(200, { "Content-Type": "application/x-apple-aspen-config" });
+      res.end(mobileConfig(caPem));
+      return;
+    }
+    if (url.pathname === "/ca.pem") {
+      res.writeHead(200, { "Content-Type": "application/x-x509-ca-cert" });
+      res.end(caPem);
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(`<!doctype html><html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mouse_phone — CA</title>
+<style>body{font-family:ui-monospace,monospace;background:#fbfbfa;color:#191919;max-width:520px;margin:0 auto;padding:32px 22px;line-height:1.7}
+h1{font-size:20px;letter-spacing:-.06em}a.btn{display:block;text-align:center;background:#1d1d1d;color:#fff;text-decoration:none;padding:15px;border-radius:12px;margin:14px 0;font-size:12px;letter-spacing:.08em}
+ol{padding-left:20px;font-size:12px;color:#555}code{background:#eee;padding:1px 5px;border-radius:4px}</style>
+</head><body>
+<h1>dot. — installa la CA</h1>
+<p>Per far funzionare HTTPS e WebSocket su iOS serve una CA fidata (una volta sola).</p>
+<a class="btn" href="/ca.mobileconfig">1 · INSTALLA IL PROFILO</a>
+<ol>
+  <li>Impostazioni → <b>Profilo scaricato</b> → Installa (passcode) → Installa.</li>
+  <li>Impostazioni → Generali → Info → <b>Impostazioni attendibilità certificati</b>.</li>
+  <li>Attiva l'interruttore per <b>mouse_phone Local CA</b> → Continua.</li>
+  <li>Torna su <code>${JOIN_URL}</code> e ricarica.</li>
+</ol>
+<p><small>Alternativa: <a href="/ca.pem">scarica rootCA.pem</a> (AirDrop).</small></p>
+</body></html>`);
+  });
+  caServer.on("error", (err) => console.log(`CA server (${CA_PORT}): ${err.message}`));
+  caServer.listen(CA_PORT, () => {
+    console.log(`  CA:      http://${LAN_IP}:${CA_PORT}/ca   (installazione sul telefono)`);
+  });
+}
+
+// --- avvio ---
 server.listen(PORT, async () => {
   console.log("dot. remote trackpad in ascolto:");
   console.log(`  Mac:     https://localhost:${PORT}`);
   console.log(`  join:    ${JOIN_URL}`);
-  for (const ip of lanAddresses()) console.log(`  iPhone:  https://${ip}:${PORT}`);
+  console.log(`  iPhone:  ${LOCAL_URL}   (mDNS / Bonjour)`);
   console.log(`  QR:      https://localhost:${PORT}/qr`);
+  startCaServer();
   try {
     console.log("\n" + (await QRCode.toString(JOIN_URL, { type: "terminal", small: true })) + "\n");
   } catch (_) {}

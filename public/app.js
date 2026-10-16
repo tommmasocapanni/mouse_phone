@@ -13,8 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const pad = $("trackpad");
-  const glow = $("glow");
-  const cross = $("cross");
+  const canvas = $("dotcanvas");
   const range = $("sensitivity");
   const value = $("sensitivityValue");
   const toastEl = $("toast");
@@ -34,6 +33,8 @@
   const invXBtn = $("invX");
   const invYBtn = $("invY");
   const clock = $("clock");
+  const ptr = $("ptr");
+  const ptrLabel = $("ptrLabel");
 
   const settings = Object.assign(
     { sens: 50, precision: false, invX: false, invY: false },
@@ -302,6 +303,126 @@
     flushMove();
   }
 
+  // ---------- fluid dot trail (solo rendering) ----------
+  const ctx = canvas.getContext("2d", { alpha: false });
+  const BG = "#fbfbfa";
+  const GAP = 19;
+  const POINT_RADIUS = 1.38;
+  const TRAIL_FADE = 850;
+  const PULSE_FADE = 460;
+  let cw = 0;
+  let ch = 0;
+  let trail = [];
+  let pulse = [];
+  let hadActivity = true;
+
+  function resizeCanvas() {
+    const rect = pad.getBoundingClientRect();
+    cw = rect.width;
+    ch = rect.height;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round(cw * dpr));
+    canvas.height = Math.max(1, Math.round(ch * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    hadActivity = true;
+  }
+  new ResizeObserver(resizeCanvas).observe(pad);
+  resizeCanvas();
+
+  function addTrailPoint(x, y, t) {
+    const last = trail[trail.length - 1];
+    if (last) {
+      const dist = Math.hypot(x - last.x, y - last.y);
+      const n = Math.min(40, Math.floor(dist / 5));
+      for (let k = 1; k <= n; k++) {
+        const f = k / (n + 1);
+        trail.push({ x: last.x + (x - last.x) * f, y: last.y + (y - last.y) * f, t: t - 2 * (n + 1 - k) });
+      }
+    }
+    trail.push({ x, y, t });
+    if (trail.length > 260) trail.splice(0, trail.length - 260);
+  }
+
+  function addPulse(x, y) {
+    pulse.push({ x, y, t: performance.now() });
+  }
+
+  function draw(time) {
+    if (!cw || !ch) {
+      requestAnimationFrame(draw);
+      return;
+    }
+    const active = trail.length > 0 || pulse.length > 0;
+    if (!active && !hadActivity) {
+      requestAnimationFrame(draw);
+      return;
+    }
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, cw, ch);
+    trail = trail.filter((p) => time - p.t < TRAIL_FADE);
+    pulse = pulse.filter((p) => time - p.t < PULSE_FADE);
+
+    const cols = Math.ceil(cw / GAP);
+    const rows = Math.ceil(ch / GAP);
+    const startX = (cw - (cols - 1) * GAP) / 2;
+    const startY = (ch - (rows - 1) * GAP) / 2;
+    const span = Math.max(1, trail.length - 1);
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        const x = startX + col * GAP;
+        const y = startY + row * GAP;
+        let influence = 0;
+        let hue = 0;
+
+        for (let i = trail.length - 1; i >= 0; i -= 2) {
+          const p = trail[i];
+          const life = 1 - (time - p.t) / TRAIL_FADE;
+          if (life <= 0) continue;
+          const radius = 4 + 40 * Math.pow(life, 0.8);
+          const dx = x - p.x;
+          const dy = y - p.y;
+          if (Math.abs(dx) > radius * 1.5 || Math.abs(dy) > radius * 1.5) continue;
+          const a = Math.exp(-(dx * dx + dy * dy) / (radius * radius * 0.52)) * Math.pow(life, 1.5);
+          if (a > influence) {
+            influence = a;
+            hue = 208 + 92 * (i / span);
+          }
+        }
+
+        for (const p of pulse) {
+          const progress = (time - p.t) / PULSE_FADE;
+          const rad = 10 + 78 * progress;
+          const dist = Math.hypot(x - p.x, y - p.y);
+          const a = Math.exp(-Math.pow((dist - rad) / (15 + 12 * progress), 2)) * (1 - progress) * 0.85;
+          if (a > influence) {
+            influence = a;
+            hue = 280;
+          }
+        }
+
+        const dotSize = POINT_RADIUS + Math.min(1, Math.pow(influence, 0.9)) * 0.85;
+        ctx.beginPath();
+        ctx.arc(x, y, dotSize, 0, Math.PI * 2);
+        if (influence > 0.025) {
+          const lum = 66 + 8 * (1 - influence);
+          ctx.fillStyle = `hsl(${hue.toFixed(0)} 83% ${lum}% / ${Math.min(0.96, 0.15 + influence * 0.85)})`;
+          ctx.fill();
+          if (influence < 0.65) {
+            ctx.fillStyle = `rgba(174,174,174,${(1 - influence) * 0.52})`;
+            ctx.fill();
+          }
+        } else {
+          ctx.fillStyle = "#bcbcbc";
+          ctx.fill();
+        }
+      }
+    }
+    hadActivity = active;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
   // ---------- trackpad ----------
   const pointers = new Map();
   let press = null;
@@ -314,10 +435,7 @@
 
   function paint(e) {
     const p = padPos(e);
-    glow.style.left = p.x + "px";
-    glow.style.top = p.y + "px";
-    cross.style.left = p.x + "px";
-    cross.style.top = p.y + "px";
+    addTrailPoint(p.x, p.y, performance.now());
   }
 
   function moveBy(dx, dy) {
@@ -338,6 +456,7 @@
     if (!powerOn) return;
     ensureSensors();
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) trail = [];
     paint(e);
     pad.classList.add("active");
     anchored = true;
@@ -402,13 +521,9 @@
         const isTap = !press.rightFired && !press.moved && Date.now() - press.t0 < TAP_MS;
         if (press.timer) clearTimeout(press.timer);
         if (isTap) {
+          const p = padPos(e);
+          addPulse(p.x, p.y);
           send({ type: "click", button: "left" });
-          glow.style.width = "310px";
-          glow.style.height = "310px";
-          setTimeout(() => {
-            glow.style.width = "230px";
-            glow.style.height = "230px";
-          }, 170);
           hapticTick();
         }
         press = null;
@@ -437,6 +552,8 @@
       pointers.clear();
       anchored = false;
       pad.classList.remove("active");
+      trail = [];
+      pulse = [];
       toastMsg("DEVICE DISCONNECTED");
     } else {
       toastMsg("DEVICE CONNECTED");
@@ -478,6 +595,12 @@
     hapticTick();
   });
   sheetHandle.addEventListener("click", () => toggleSheet(false));
+  document.addEventListener("pointerdown", (e) => {
+    if (!sheetOpen) return;
+    if (e.target.closest(".sheet")) return;
+    if (e.target.closest("#chevron")) return;
+    toggleSheet(false);
+  });
   conn.addEventListener("click", () => {
     toastMsg(connected && powerOn ? `CONNECTED TO ${hostname || "MAC"}` : "NO DEVICE CONNECTED");
   });
@@ -590,6 +713,107 @@
   function tick() {
     clock.textContent = new Date().toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
   }
+
+  // ---------- pull to refresh ----------
+  const PTR_THRESHOLD = 78;
+  const PTR_MAX = PTR_THRESHOLD * 1.7;
+  let ptrStartY = null;
+  let ptrDy = 0;
+  let ptrActive = false;
+  let suppressClickUntil = 0;
+
+  function ptrReset() {
+    ptr.classList.remove("ready");
+    ptr.style.transition = "transform .25s ease, opacity .25s ease";
+    ptr.style.transform = "translateY(-70px)";
+    ptr.style.opacity = "0";
+  }
+
+  function ptrBlocked(target) {
+    if (!target || !target.closest) return true;
+    if (target.closest(".trackpad")) return true;
+    if (target.closest(".sheet")) return true;
+    if (target.closest("input")) return true;
+    return sheetOpen;
+  }
+
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      if (suppressClickUntil > performance.now()) return;
+      if (e.touches.length !== 1 || ptrBlocked(e.target)) {
+        ptrStartY = null;
+        return;
+      }
+      ptrStartY = e.touches[0].clientY;
+      ptrDy = 0;
+      ptrActive = false;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (ptrStartY === null) return;
+      if (e.touches.length !== 1) {
+        ptrStartY = null;
+        ptrReset();
+        ptrActive = false;
+        return;
+      }
+      const dy = e.touches[0].clientY - ptrStartY;
+      if (dy <= 6) return;
+      e.preventDefault();
+      ptrActive = true;
+      ptrDy = Math.min(dy, PTR_MAX);
+      const eased = Math.min(ptrDy * 0.55, PTR_THRESHOLD);
+      const ready = ptrDy >= PTR_THRESHOLD;
+      ptr.style.transition = "none";
+      ptr.style.opacity = String(Math.min(1, ptrDy / PTR_THRESHOLD));
+      ptr.style.transform = `translateY(${eased}px)`;
+      ptr.classList.toggle("ready", ready);
+      ptrLabel.textContent = ready ? "RILASCIA PER AGGIORNARE" : "TRASCINA PER AGGIORNARE";
+    },
+    { passive: false }
+  );
+
+  function ptrEnd() {
+    if (ptrStartY === null) return;
+    const pulled = ptrActive && ptrDy >= PTR_THRESHOLD;
+    ptrStartY = null;
+    if (pulled) {
+      ptr.classList.add("loading");
+      ptr.classList.remove("ready");
+      ptr.style.transition = "none";
+      ptr.style.opacity = "1";
+      ptr.style.transform = "translateY(30px)";
+      ptrLabel.textContent = "RICARICO…";
+      suppressClickUntil = performance.now() + 900;
+      setTimeout(() => location.reload(), 220);
+      return;
+    }
+    if (ptrActive) {
+      suppressClickUntil = performance.now() + 450;
+      ptrReset();
+    }
+    ptrActive = false;
+  }
+
+  document.addEventListener("touchend", ptrEnd);
+  document.addEventListener("touchcancel", ptrEnd);
+
+  document.addEventListener(
+    "click",
+    (e) => {
+      if (suppressClickUntil > performance.now()) {
+        e.stopPropagation();
+        e.preventDefault();
+        suppressClickUntil = 0;
+      }
+    },
+    true
+  );
 
   // ---------- init ----------
   injectHaptic(pad);
