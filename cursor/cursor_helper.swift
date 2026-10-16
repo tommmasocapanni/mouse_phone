@@ -55,10 +55,12 @@ let keyCodes: [String: CGKeyCode] = [
     "left": 123, "right": 124, "down": 125, "up": 126,
 ]
 
-func pressKey(name: String, command: Bool) {
+func pressKey(name: String, command: Bool, control: Bool = false) {
     guard let code = keyCodes[name] else { return }
     let src = CGEventSource(stateID: .combinedSessionState)
-    let flags: CGEventFlags = command ? .maskCommand : []
+    var flags: CGEventFlags = []
+    if command { flags.insert(.maskCommand) }
+    if control { flags.insert(.maskControl) }
     guard let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true),
           let up = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false) else { return }
     down.flags = flags
@@ -94,6 +96,7 @@ struct Command: Decodable {
     let text: String?
     let key: String?
     let command: Bool?
+    let control: Bool?
 }
 
 let trusted = isTrusted()
@@ -131,7 +134,7 @@ stdin.readabilityHandler = { handle in
         case "text":
             if let text = cmd.text { typeText(text) }
         case "key":
-            if let key = cmd.key { pressKey(name: key, command: cmd.command ?? false) }
+            if let key = cmd.key { pressKey(name: key, command: cmd.command ?? false, control: cmd.control ?? false) }
         case "media":
             if let key = cmd.key { mediaKey(key) }
         default:

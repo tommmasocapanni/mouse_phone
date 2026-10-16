@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { spawn, execSync } = require("child_process");
+const { spawn, execSync, execFile } = require("child_process");
 const { WebSocketServer } = require("ws");
 const QRCode = require("qrcode");
 
@@ -204,6 +204,17 @@ function sendHelper(obj) {
 // --- messaggi (comuni a WebSocket e HTTP/SSE) ---
 const MEDIA_KEYS = ["volup", "voldown", "mute", "play", "next", "prev"];
 
+// Cambio scrivania: i tasti simbolici di sistema (Ctrl+←/→) NON vengono
+// attivati dagli eventi CGEvent sintetici, quindi passiamo da System Events.
+function switchSpace(dir) {
+  const keyCode = dir === "left" ? 123 : 124;
+  execFile(
+    "/usr/bin/osascript",
+    ["-e", `tell application "System Events" to key code ${keyCode} using control down`],
+    (err) => { if (err) console.log(`space ${dir} error: ${err.message}`); }
+  );
+}
+
 function handleMessage(msg) {
   if (!msg || typeof msg !== "object") return;
   switch (msg.type) {
@@ -226,6 +237,11 @@ function handleMessage(msg) {
     case "key":
       if (typeof msg.key === "string") {
         sendHelper({ cmd: "key", key: msg.key, command: !!msg.command });
+      }
+      break;
+    case "space":
+      if (msg.dir === "left" || msg.dir === "right") {
+        switchSpace(msg.dir);
       }
       break;
     case "media":

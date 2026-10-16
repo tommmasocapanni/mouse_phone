@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v13";
+  const BUILD = "v15";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -11,6 +11,8 @@
   const TAP_DIST = 12;
   const TAP_MS = 320;
   const SCROLL_DIV = 2.5;
+  const SWIPE_DIST = 55;
+  const SWIPE_RATIO = 1.5;
 
   // pulisce eventuali query di cache-busting (?r=...) dall'URL, così la barra
   // resta pulita e l'icona salvata su Home non memorizza il parametro.
@@ -592,6 +594,7 @@
   let press = null;
   let padCentroid = null;
   let twoFinger = null;
+  let threeFinger = null;
 
   function padPos(e) {
     const r = pad.getBoundingClientRect();
@@ -655,6 +658,15 @@
           x0: (pts[0].x + pts[1].x) / 2,
           y0: (pts[0].y + pts[1].y) / 2,
         };
+      } else if (pointers.size === 3) {
+        // tre dita: niente scroll/click, gestiamo lo swipe tra le scrivanie
+        twoFinger = null;
+        const pts = [...pointers.values()];
+        threeFinger = {
+          fired: false,
+          x0: (pts[0].x + pts[1].x + pts[2].x) / 3,
+          y0: (pts[0].y + pts[1].y + pts[2].y) / 3,
+        };
       }
     }
   });
@@ -674,6 +686,29 @@
         if (press.timer) clearTimeout(press.timer);
       }
       moveBy(dx, dy);
+    } else if (pointers.size >= 3 && threeFinger) {
+      // swipe orizzontale con 3 dita -> cambia scrivania sul Mac
+      const pts = [...pointers.values()];
+      let sx = 0;
+      let sy = 0;
+      for (const p of pts) {
+        sx += p.x;
+        sy += p.y;
+      }
+      const cx = sx / pts.length;
+      const cy = sy / pts.length;
+      if (!threeFinger.fired) {
+        const dx = cx - threeFinger.x0;
+        const dy = cy - threeFinger.y0;
+        if (Math.abs(dx) > SWIPE_DIST && Math.abs(dx) > Math.abs(dy) * SWIPE_RATIO) {
+          threeFinger.fired = true;
+          // dita a destra -> scrivania a sinistra (come il trackpad del Mac)
+          const dir = dx > 0 ? "left" : "right";
+          send({ type: "space", dir });
+          hapticTick();
+          toastMsg(dir === "right" ? "SCRIVANIA ▶" : "◀ SCRIVANIA");
+        }
+      }
     } else if (pointers.size >= 2) {
       const pts = [...pointers.values()];
       const cx = (pts[0].x + pts[1].x) / 2;
@@ -708,6 +743,7 @@
       toastMsg("RIGHT CLICK");
     }
     if (pointers.size < 2) twoFinger = null;
+    if (pointers.size < 3) threeFinger = null;
 
     if (pointers.size === 0) {
       if (press) {
@@ -744,6 +780,7 @@
       clearPress();
       pointers.clear();
       twoFinger = null;
+      threeFinger = null;
       anchored = false;
       pad.classList.remove("active");
       trail = [];

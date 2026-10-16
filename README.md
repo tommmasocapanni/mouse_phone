@@ -46,16 +46,20 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 
 ## Uso
 
-| Controllo | Azione |
-|---|---|
-| Pad · 1 dito | Muove il cursore |
 | Pad · tap | Click sinistro |
 | Pad · tieni premuto | Click destro |
 | Pad · 2 dita | Scroll |
+| Pad · tap 2 dita | Click destro |
+| Pad · swipe 3 dita ←/→ | Cambia scrivania sul Mac |
 | Trascina giù (fuori dal pad) | Pull-to-refresh della web app |
 | ⏻ | Accende/spegne il puntatore |
 | ⌄ | Apre il pannello (testo, media, opzioni) |
 | CALIBRA | Riporta il puntatore al centro |
+
+> Lo swipe a 3 dita invia **Ctrl+←/→** tramite **System Events**: la prima volta
+> macOS può chiedere di consentire al terminale di controllare **System Events**
+> (Impostazioni → Privacy e sicurezza → Automazione) e serve il permesso
+> **Accessibilità** già richiesto per muovere il cursore.
 
 ## Struttura
 
