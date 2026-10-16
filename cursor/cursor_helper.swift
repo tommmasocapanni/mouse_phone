@@ -76,13 +76,14 @@ let mediaKeys: [String: Int32] = [
 func mediaKey(_ name: String) {
     guard let key = mediaKeys[name] else { return }
     for down in [true, false] {
-        let flags = down ? 0x0a : 0x0b
-        let data1 = Int((key << 16) | (Int32(flags) << 8) | 0x0a)
-        guard let ev = NSEvent.otherEvent(with: .systemDefined, location: .zero,
-                                          modifierFlags: [], timestamp: 0,
-                                          windowNumber: 0, context: nil,
-                                          subtype: 8, data1: data1, data2: -1) else { continue }
-        ev.cgEvent?.post(tap: .cghidEventTap)
+        let data1 = Int(key) << 16 | ((down ? 0x0a : 0x0b) << 8)
+        if let ev = NSEvent.otherEvent(with: .systemDefined, location: .zero,
+                                       modifierFlags: [], timestamp: 0,
+                                       windowNumber: 0, context: nil,
+                                       subtype: 8, data1: data1, data2: -1) {
+            ev.cgEvent?.post(tap: .cghidEventTap)
+        }
+        usleep(20000)
     }
 }
 
