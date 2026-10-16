@@ -1,0 +1,19 @@
+{
+  "name": "dot. remote trackpad",
+  "short_name": "dot.",
+  "description": "Trackpad e puntatore remoto per il Mac",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fbfbfa",
+  "theme_color": "#fbfbfa",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

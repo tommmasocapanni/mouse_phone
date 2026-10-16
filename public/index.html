@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="dot.">
+  <meta name="theme-color" content="#fbfbfa">
+  <title>dot. / Remote Trackpad</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="phone">
+  <div class="shell">
+    <header class="status">
+      <span id="clock">9:41</span>
+      <span class="sysicons">● ◕ ▰</span>
+    </header>
+
+    <section class="top">
+      <button class="power" id="power" aria-label="Accendi o spegni connessione">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v10M5.6 5.6a9 9 0 1 0 12.8 0"/></svg>
+      </button>
+      <button class="connection" id="connection">
+        <span class="led" id="led"></span>
+        <span class="conntexts">
+          <strong id="device">MOUSE_PHONE / MAC</strong>
+          <small id="statusText">○ CONNECTING</small>
+        </span>
+        <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
+      </button>
+    </section>
+
+    <div class="brand">
+      <span class="name">dot.</span>
+      <span class="mode" id="mode">/ TRACKPAD MODE</span>
+    </div>
+
+    <div class="trackpad" id="trackpad" aria-label="Area gesture per muovere il cursore">
+      <div class="dots"></div>
+      <div class="glow" id="glow"></div>
+      <div class="cross" id="cross"></div>
+      <div class="hint">SWIPE TO MOVE · TAP TO CLICK</div>
+    </div>
+
+    <section class="lower">
+      <div class="sensrow">
+        <label for="sensitivity">SENSITIVITY</label>
+        <span class="value" id="sensitivityValue">50%</span>
+      </div>
+      <div class="sliderrow">
+        <span>−</span>
+        <input class="slider" id="sensitivity" type="range" min="1" max="100" value="50" aria-label="Sensibilità cursore">
+        <span>＋</span>
+      </div>
+      <div class="footer">
+        <div class="footnote">
+          <strong>01 / INPUT</strong><br>
+          ONE FINGER / MOVE<br>
+          TAP / CLICK · HOLD / RIGHT · TWO / SCROLL
+        </div>
+        <button class="calibrate" id="calibrate" title="Ricalibra il puntatore" aria-label="Ricalibra il cursore">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="7" stroke-dasharray="5 3"/><path d="M12 1v6M12 17v6M1 12h6M17 12h6"/></svg>
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <div class="sheet-handle" id="sheetHandle"></div>
+
+    <section class="sheet-section">
+      <div class="sec-head">
+        <strong>02 / TEXT</strong>
+        <button class="mic" id="mic" title="Dettatura" aria-label="Dettatura vocale">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4"/></svg>
+        </button>
+      </div>
+      <div class="textrow">
+        <input id="textInput" type="text" placeholder="scrivi sul mac…" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button id="sendText" class="send" aria-label="Invia">↵</button>
+      </div>
+    </section>
+
+    <section class="sheet-section">
+      <div class="sec-head"><strong>03 / MEDIA</strong></div>
+      <div class="mediagrid">
+        <button class="mediabtn" data-media="voldown" aria-label="Volume giù">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 12h5"/></svg>
+        </button>
+        <button class="mediabtn" data-media="volup" aria-label="Volume su">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 8.5a5 5 0 0 1 0 7"/></svg>
+        </button>
+        <button class="mediabtn" data-media="mute" aria-label="Muto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16 9l5 6M21 9l-5 6"/></svg>
+        </button>
+        <button class="mediabtn" data-media="prev" aria-label="Precedente">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6v12"/><path d="M18 6.5v11L9.5 12z"/></svg>
+        </button>
+        <button class="mediabtn" data-media="play" aria-label="Play / Pausa">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6.5v11L16.5 12z"/><path d="M19 6v12"/></svg>
+        </button>
+        <button class="mediabtn" data-media="next" aria-label="Successiva">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6v12"/><path d="M6 6.5v11L14.5 12z"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <section class="sheet-section">
+      <div class="sec-head"><strong>04 / OPTIONS</strong></div>
+      <div class="chips">
+        <button class="chip" id="precision">PRECISION</button>
+        <button class="chip" id="invX">INVERT X</button>
+        <button class="chip" id="invY">INVERT Y</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast">READY</div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+node_modules/
+certs/
+cursor/cursor_helper
+public/icon.png
