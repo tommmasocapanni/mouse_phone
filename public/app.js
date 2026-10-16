@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v11";
+  const BUILD = "v12";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -591,6 +591,7 @@
   const pointers = new Map();
   let press = null;
   let padCentroid = null;
+  let twoFinger = null;
 
   function padPos(e) {
     const r = pad.getBoundingClientRect();
@@ -646,6 +647,15 @@
     } else {
       clearPress();
       padCentroid = null;
+      if (pointers.size === 2) {
+        const pts = [...pointers.values()];
+        twoFinger = {
+          t0: Date.now(),
+          moved: false,
+          x0: (pts[0].x + pts[1].x) / 2,
+          y0: (pts[0].y + pts[1].y) / 2,
+        };
+      }
     }
   });
 
@@ -668,9 +678,14 @@
       const pts = [...pointers.values()];
       const cx = (pts[0].x + pts[1].x) / 2;
       const cy = (pts[0].y + pts[1].y) / 2;
-      if (padCentroid) {
+      if (twoFinger && Math.hypot(cx - twoFinger.x0, cy - twoFinger.y0) > TAP_DIST) {
+        twoFinger.moved = true;
+      }
+      const canScroll = !twoFinger || twoFinger.moved;
+      if (padCentroid && canScroll) {
         const k = sensMult() / SCROLL_DIV;
-        send({ type: "scroll", dx: (cx - padCentroid.x) * k, dy: (cy - padCentroid.y) * k });
+        // direzione invertita rispetto al trascinamento (scorrimento "naturale")
+        send({ type: "scroll", dx: -(cx - padCentroid.x) * k, dy: -(cy - padCentroid.y) * k });
       }
       padCentroid = { x: cx, y: cy };
     }
@@ -678,7 +693,21 @@
 
   function releasePointer(e) {
     if (!pointers.has(e.pointerId)) return;
+    const before = pointers.size;
     pointers.delete(e.pointerId);
+
+    // tap con due dita (senza trascinare) -> clic destro
+    if (twoFinger && before === 2 && !twoFinger.moved && Date.now() - twoFinger.t0 < TAP_MS) {
+      const pts = [...pointers.values()];
+      if (pts.length) {
+        const p = padPos({ clientX: pts[0].x, clientY: pts[0].y });
+        addPulse(p.x, p.y);
+      }
+      send({ type: "click", button: "right" });
+      hapticTick();
+      toastMsg("RIGHT CLICK");
+    }
+    if (pointers.size < 2) twoFinger = null;
 
     if (pointers.size === 0) {
       if (press) {
@@ -714,6 +743,7 @@
     if (!powerOn) {
       clearPress();
       pointers.clear();
+      twoFinger = null;
       anchored = false;
       pad.classList.remove("active");
       trail = [];
