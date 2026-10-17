@@ -499,8 +499,19 @@ body {
   z-index: 45;
   display: flex;
   flex-direction: column;
+  --np-cover-rgb: 29 29 29;
+  --np-cover-accent: color-mix(in srgb, var(--accent) 82%, rgb(var(--np-cover-rgb)) 18%);
+  --np-cover-top: var(--paper);
+  --np-cover-bottom: var(--paper);
   padding: calc(16px + env(safe-area-inset-top)) 26px calc(26px + env(safe-area-inset-bottom));
-  background: var(--paper);
+  background-color: var(--np-cover-top);
+  background-image: linear-gradient(180deg,
+    var(--np-cover-top) 0%,
+    color-mix(in srgb, var(--np-cover-top) 55%, var(--np-cover-bottom)) 52%,
+    var(--np-cover-bottom) 100%);
+  background-size: 100% calc(100% - env(safe-area-inset-top));
+  background-position: left bottom;
+  background-repeat: no-repeat;
   transform: translateY(101%);
   transition: transform .34s cubic-bezier(.4, 0, .2, 1);
   will-change: transform;
@@ -533,7 +544,7 @@ body {
 .np-full-audio:active,
 .np-full-queue:active { transform: scale(.94); }
 .np-full-audio.active,
-.np-full-queue.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.np-full-queue.active { background: var(--np-cover-accent); border-color: var(--np-cover-accent); color: var(--accent-ink); }
 
 .np-vol-anchor { position: relative; }
 
@@ -585,7 +596,7 @@ body {
   bottom: 0;
   height: 0%;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--np-cover-accent);
 }
 .np-vol-thumb {
   position: absolute;
@@ -612,7 +623,7 @@ body {
   margin: 26px -26px;
   perspective: 1000px;
   touch-action: pan-y;
-  contain: layout paint;
+  contain: layout;
 }
 .np-coverflow-track {
   position: absolute;
@@ -738,10 +749,10 @@ body {
   gap: 8px;
   margin-top: 10px;
   padding: 0 13px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--np-cover-accent) 55%, var(--np-cover-top));
   border-radius: 24px;
-  background: var(--surface);
-  color: var(--ink);
+  background: transparent;
+  color: color-mix(in srgb, var(--np-cover-accent) 45%, var(--np-cover-top));
   font: inherit;
   font-size: 9px;
   letter-spacing: .12em;
@@ -751,6 +762,19 @@ body {
 .np-preview-play svg { width: 15px; height: 15px; }
 .np-preview-play:active { transform: scale(.96); }
 .np-full.queue .np-preview-play { display: none; }
+
+@media (prefers-color-scheme: light) {
+  .np-full-title {
+    color: #fff;
+  }
+  .np-full-site {
+    color: rgb(255 255 255 / .82);
+  }
+  .np-preview-play {
+    border-color: rgb(255 255 255 / .68);
+    color: #fff;
+  }
+}
 
 .np-full-spacer { flex: 1; min-height: 12px; }
 
@@ -781,7 +805,7 @@ body {
   padding: 8px 4px;
 }
 .nq-item.now { background: var(--surface-2); border-radius: 10px; }
-.nq-item.now .nq-title { color: var(--accent); }
+.nq-item.now .nq-title { color: var(--np-cover-accent, var(--accent)); }
 .nq-art {
   width: 44px;
   height: 44px;
@@ -858,9 +882,9 @@ body {
 .nq-menu-item.danger { color: #c0392b; }
 
 .np-seek {
-  width: 44px;
-  height: 52px;
-  flex: 0 0 44px;
+  width: 50px;
+  height: 56px;
+  flex: 0 0 50px;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -868,6 +892,7 @@ body {
   display: grid;
   place-items: center;
   padding: 0;
+  margin-inline: 2px;
 }
 .np-seek-ico {
   position: relative;
@@ -908,7 +933,7 @@ body {
 .np-full-fill {
   height: 100%;
   width: 0%;
-  background: var(--accent);
+  background: var(--np-cover-accent);
   border-radius: 999px;
   transition: width .25s linear;
 }
@@ -920,7 +945,7 @@ body {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--np-cover-accent);
   transform: translate(-50%, -50%) scale(.6);
   opacity: 0;
   transition: opacity .15s, transform .15s;
@@ -955,11 +980,17 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+@media (prefers-color-scheme: light) {
+  .np-full-times {
+    color: color-mix(in srgb, var(--paper) 78%, var(--np-cover-bottom));
+  }
+}
+
 .np-full-controls {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   margin-top: 22px;
 }
 .np-ctl {
@@ -975,30 +1006,36 @@ body {
   letter-spacing: .12em;
   cursor: pointer;
 }
-.np-ctl.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.np-ctl.active { background: var(--np-cover-accent); border-color: var(--np-cover-accent); color: var(--accent-ink); }
 .np-ctl:active { transform: scale(.95); }
 .np-ctl-icon {
-  width: 48px;
+  width: 52px;
   min-width: 0;
-  height: 48px;
+  height: 52px;
   padding: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
 }
-.np-ctl-icon svg { width: 24px; height: 24px; }
+.np-ctl-icon svg { width: 27px; height: 27px; }
 .np-ctl-play {
-  width: 60px;
+  width: 64px;
   min-width: 0;
-  height: 60px;
+  height: 64px;
   border-radius: 50%;
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
   display: grid;
   place-items: center;
 }
-.np-ctl-play svg { width: 26px; }
+.np-ctl-play svg { width: 30px; }
+.np-full-controls .np-ctl-icon,
+.np-full-controls .np-ctl-play,
+.np-full-controls .np-seek {
+  border-color: transparent;
+  background: transparent;
+  color: #fff;
+}
+.np-full-controls .np-ctl:active,
+.np-full-controls .np-seek:active { transform: scale(.94); }
 
 /* toggle stile loop/shuffle: salta-annunci + riproduzione automatica */
 .np-full-toggles {
@@ -1020,7 +1057,7 @@ body {
   cursor: pointer;
 }
 .np-toggle svg { width: 18px; height: 18px; }
-.np-toggle.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.np-toggle.active { background: var(--np-cover-accent); border-color: var(--np-cover-accent); color: var(--accent-ink); }
 .np-toggle:active { transform: scale(.92); }
 
 /* --- diagnosi player --- */
@@ -1743,6 +1780,8 @@ body {
 
 @media (max-width: 480px) {
   body { background: var(--paper); }
+  .np-theme-active body,
+  .np-theme-active .phone { background-color: var(--np-status-color, var(--paper)); }
   .phone {
     border: 0;
     border-radius: 0;
@@ -1756,6 +1795,10 @@ body {
     --np-cover-size: var(--np-cover-base-size);
     height: var(--np-cover-size);
   }
+}
+
+@media (max-width: 360px) {
+  .np-full { padding-left: 16px; padding-right: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

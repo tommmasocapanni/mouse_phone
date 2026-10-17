@@ -325,6 +325,7 @@
     if (np.mode !== "media") return;
     dot.haptic();
     np.fullOpen = true;
+    document.documentElement.classList.add("np-theme-active");
     npFull.classList.add("show");
     npFull.setAttribute("aria-hidden", "false");
     npCoverflow.classList.remove("ready");
@@ -335,6 +336,7 @@
   }
   function closeNpFull() {
     np.fullOpen = false;
+    document.documentElement.classList.remove("np-theme-active");
     npFull.classList.remove("show");
     npFull.setAttribute("aria-hidden", "true");
     closeVol();
@@ -419,6 +421,12 @@
   let coverInfoTimer = null;
   let coverPointer = null;
   let coverSuppressClick = false;
+  let coverColorUrl = "";
+  let coverColorRequest = 0;
+  const coverColorCache = new Map();
+  const COVER_COLOR_SAMPLE_SIZE = 12;
+  const themeColorMeta = [...document.querySelectorAll('meta[name="theme-color"]')];
+  const originalThemeColors = themeColorMeta.map((meta) => meta.content);
 
   function hostOf(url) {
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
@@ -492,6 +500,102 @@
   function selectedCoverItem() {
     return coverItems.find((item) => item.key === coverFocusKey) || coverItems[0] || null;
   }
+
+  function rememberCoverColor(url, color) {
+    coverColorCache.delete(url);
+    coverColorCache.set(url, color);
+    if (coverColorCache.size > 32) coverColorCache.delete(coverColorCache.keys().next().value);
+  }
+
+  function applyCoverPalette(color) {
+    if (!color) {
+      npFull.style.removeProperty("--np-cover-rgb");
+      npFull.style.removeProperty("--np-cover-top");
+      npFull.style.removeProperty("--np-cover-bottom");
+      document.documentElement.style.removeProperty("--np-status-color");
+      themeColorMeta.forEach((meta, index) => { meta.content = originalThemeColors[index]; });
+      return;
+    }
+
+    const darkMode = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const base = darkMode ? [14, 14, 14] : [251, 251, 250];
+    const top = color.map((channel, index) => {
+      const tinted = base[index] * 0.72 + channel * 0.28;
+      return Math.round(darkMode ? tinted * 0.9 + 255 * 0.1 : tinted);
+    });
+    const bottom = color.map((channel, index) => {
+      const blend = (top[index] * 0.48 + channel * 0.52) * 0.8;
+      return Math.round(Math.min(blend, top[index] * 0.82));
+    });
+    const cssColor = (rgb) => `rgb(${rgb.join(" ")})`;
+    const hexColor = `#${top.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+    npFull.style.setProperty("--np-cover-rgb", color.join(" "));
+    npFull.style.setProperty("--np-cover-top", cssColor(top));
+    npFull.style.setProperty("--np-cover-bottom", cssColor(bottom));
+    document.documentElement.style.setProperty("--np-status-color", cssColor(top));
+    themeColorMeta.forEach((meta) => { meta.content = hexColor; });
+  }
+
+  function updateCoverTheme(item) {
+    const url = item && item.art ? item.art : "";
+    if (url === coverColorUrl) return;
+    coverColorUrl = url;
+    const request = ++coverColorRequest;
+    if (!url) {
+      applyCoverPalette(null);
+      return;
+    }
+    if (coverColorCache.has(url)) {
+      const color = coverColorCache.get(url);
+      applyCoverPalette(color ? color.split(" ").map(Number) : null);
+      return;
+    }
+
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      let color = null;
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = COVER_COLOR_SAMPLE_SIZE;
+        canvas.height = COVER_COLOR_SAMPLE_SIZE;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) throw new Error("Canvas 2D context unavailable");
+        context.drawImage(image, 0, 0, COVER_COLOR_SAMPLE_SIZE, COVER_COLOR_SAMPLE_SIZE);
+        const pixels = context.getImageData(0, 0, COVER_COLOR_SAMPLE_SIZE, COVER_COLOR_SAMPLE_SIZE).data;
+        let red = 0;
+        let green = 0;
+        let blue = 0;
+        let count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          if (pixels[i + 3] < 32) continue;
+          red += pixels[i];
+          green += pixels[i + 1];
+          blue += pixels[i + 2];
+          count++;
+        }
+        if (count) color = [Math.round(red / count), Math.round(green / count), Math.round(blue / count)];
+      } catch (_) {
+        color = null;
+      }
+      rememberCoverColor(url, color ? color.join(" ") : null);
+      if (request !== coverColorRequest || url !== coverColorUrl) return;
+      applyCoverPalette(color);
+    };
+    image.onerror = () => {
+      rememberCoverColor(url, null);
+      if (request === coverColorRequest && url === coverColorUrl) applyCoverPalette(null);
+    };
+    image.src = url;
+  }
+
+  const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const refreshCoverPaletteForScheme = () => {
+    const color = coverColorCache.get(coverColorUrl);
+    if (color) applyCoverPalette(color.split(" ").map(Number));
+  };
+  if (darkModeQuery.addEventListener) darkModeQuery.addEventListener("change", refreshCoverPaletteForScheme);
+  else if (darkModeQuery.addListener) darkModeQuery.addListener(refreshCoverPaletteForScheme);
 
   function updateCoverInfo(item) {
     if (!item) return;
@@ -594,7 +698,9 @@
     }
 
     npCoverflow.classList.toggle("solo", coverItems.length <= 1);
-    updateCoverInfo(selectedCoverItem());
+    const selected = selectedCoverItem();
+    updateCoverTheme(selected);
+    updateCoverInfo(selected);
   }
 
   function focusCoverItem(key, keepDragX = false) {
