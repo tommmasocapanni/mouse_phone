@@ -12,7 +12,7 @@
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=28">
+  <link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
 <main class="phone">
@@ -24,7 +24,7 @@
       <button class="connection" id="connection">
         <span class="led" id="led"></span>
         <span class="conntexts">
-          <strong id="device">MOUSE_PHONE / MAC · v28</strong>
+          <strong id="device">MOUSE_PHONE / MAC · v31</strong>
           <small id="statusText">○ CONNECTING</small>
         </span>
         <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
@@ -89,6 +89,56 @@
     </header>
 
     <div class="cine-body" id="cineBody"></div>
+
+    <div class="np-mini" id="npMini">
+      <div class="np-mini-art" id="npMiniArt"></div>
+      <div class="np-mini-text">
+        <div class="np-mini-title" id="npMiniTitle">—</div>
+        <div class="np-mini-sub" id="npMiniSub"></div>
+      </div>
+      <button class="np-mini-play" id="npMiniPlay" aria-label="Play / Pausa"></button>
+    </div>
+
+    <div class="np-full" id="npFull" aria-hidden="true">
+      <div class="np-full-top">
+        <button class="np-full-down" id="npFullDown" aria-label="Chiudi player">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div class="np-vol-anchor">
+          <button class="np-full-audio" id="npFullAudio" aria-label="Volume">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+          </button>
+          <div class="np-vol" id="npVol" aria-hidden="true">
+            <div class="np-vol-track" id="npVolTrack">
+              <div class="np-vol-fill" id="npVolFill"></div>
+              <div class="np-vol-thumb" id="npVolThumb"></div>
+            </div>
+            <div class="np-vol-val" id="npVolVal">—</div>
+          </div>
+        </div>
+      </div>
+      <div class="np-full-art" id="npFullArt"></div>
+      <div class="np-full-info">
+        <div class="np-full-title" id="npFullTitle">—</div>
+        <div class="np-full-site" id="npFullSite"></div>
+      </div>
+      <div class="np-full-spacer"></div>
+      <div class="np-full-seek">
+        <button class="np-seek" id="npBack" type="button" aria-label="Indietro 5 secondi">
+          <span class="np-seek-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
+        </button>
+        <button class="np-seek" id="npFwd" type="button" aria-label="Avanti 5 secondi">
+          <span class="np-seek-ico flip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
+        </button>
+      </div>
+      <div class="np-full-track" id="npFullTrack"><div class="np-full-fill" id="npFullFill"></div></div>
+      <div class="np-full-times"><span id="npFullCur">0:00</span><span id="npFullDur">0:00</span></div>
+      <div class="np-full-controls">
+        <button class="np-ctl" id="npFullSkip" type="button">SALTA</button>
+        <button class="np-ctl np-ctl-play" id="npFullPlay" aria-label="Play / Pausa"></button>
+        <button class="np-ctl" id="npFullAuto" type="button">AUTO</button>
+      </div>
+    </div>
 
     <div class="castmodal" id="castModal" aria-hidden="true">
       <div class="castmodal-card" id="castModalCard" role="dialog" aria-label="Invia link al Mac"></div>
@@ -169,7 +219,7 @@
   <div class="diag" id="diag" aria-hidden="true"></div>
 </main>
 <script>window.__DOT_TOKEN__ = "__PAIR_TOKEN__";</script>
-<script src="app.js?v=28"></script>
-<script src="cinema.js?v=28"></script>
+<script src="app.js?v=31"></script>
+<script src="cinema.js?v=31"></script>
 </body>
 </html>

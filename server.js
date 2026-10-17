@@ -379,7 +379,10 @@ const JS_NOWPLAYING =
   "var t=String(document.title||'').slice(0,180);" +
   "var cur=isFinite(v.currentTime)?v.currentTime:0;" +
   "var dur=isFinite(v.duration)?v.duration:0;" +
-  "return JSON.stringify({found:true,title:t,current:cur,duration:dur,paused:!!v.paused,rate:v.playbackRate||1,url:String(location.href||'').slice(0,200)});" +
+  "var art='';try{art=v.poster||'';}catch(e){}" +
+  "if(!art){var mm=document.querySelector('meta[property=\"og:image\"],meta[name=\"og:image\"]');if(mm&&mm.content)art=mm.content;}" +
+  "if(art){try{art=new URL(art,location.href).href;}catch(e){art='';}}" +
+  "return JSON.stringify({found:true,title:t,current:cur,duration:dur,paused:!!v.paused,rate:v.playbackRate||1,url:String(location.href||'').slice(0,200),art:String(art||''),site:String(location.hostname||'')});" +
   "}catch(e){return JSON.stringify({found:false,error:String(e)});}})()";
 
 // salta intro/ads: clicca i pulsanti noti (click realistico), poi euristica testuale,
@@ -405,6 +408,10 @@ function jsPlayer(action, seconds) {
   const find = "var v=" + JS_MEDIA + ";if(!v)return '0';";
   if (action === "seek")
     return "(function(){" + find + "v.currentTime=" + (Number(seconds) || 0) + ";return '1';})()";
+  if (action === "seekrel")
+    return "(function(){" + find + "var d=" + (Number(seconds) || 0) + ";var nd=v.currentTime+d;" +
+      "if(isFinite(v.duration)&&v.duration>0){nd=Math.max(0,Math.min(v.duration,nd));}else{nd=Math.max(0,nd);}" +
+      "v.currentTime=nd;return String(nd);})()";
   if (action === "play")
     return "(function(){" + find + "var p=v.play();if(p&&p.catch)p.catch(function(){});return '1';})()";
   if (action === "pause")
@@ -659,6 +666,15 @@ async function handleApi(req, res, url) {
     }
     if (p === "/api/seek" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
+      if (b.delta != null) {
+        let d = Number(b.delta);
+        if (!isFinite(d)) return jsonResponse(res, 400, { error: "delta non valido" });
+        d = Math.max(-600, Math.min(600, d));
+        const rr = await runBrowserJS(jsPlayer("seekrel", d));
+        if (!rr.ok) return jsonResponse(res, 200, { ok: false, reason: rr.reason, error: rr.error });
+        const pos = Number(rr.result);
+        return jsonResponse(res, 200, { ok: true, delta: d, position: isFinite(pos) ? pos : null });
+      }
       let sec = Number(b.seconds);
       if (!isFinite(sec) || sec < 0) return jsonResponse(res, 400, { error: "seconds non valido" });
       sec = Math.min(sec, 12 * 3600);
@@ -674,6 +690,46 @@ async function handleApi(req, res, url) {
         out = JSON.parse(r.result);
       } catch (_) {}
       return jsonResponse(res, 200, { ok: true, clicked: out.clicked || null, ad: !!out.ad, error: out.error || null });
+    }
+    if (p === "/api/audio/devices" && method === "GET") {
+      try {
+        const rep = await helperCall({ cmd: "audiolist" });
+        return jsonResponse(res, 200, { ok: true, devices: Array.isArray(rep.data) ? rep.data : [] });
+      } catch (e) {
+        return jsonResponse(res, 200, { ok: false, devices: [], error: e.message });
+      }
+    }
+    if (p === "/api/audio/output" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const dev = Number(b.deviceId);
+      if (!Number.isInteger(dev) || dev <= 0) return jsonResponse(res, 400, { error: "deviceId non valido" });
+      try {
+        await helperCall({ cmd: "audioset", deviceId: dev });
+        return jsonResponse(res, 200, { ok: true, deviceId: dev });
+      } catch (e) {
+        return jsonResponse(res, 200, { ok: false, error: e.message });
+      }
+    }
+    if (p === "/api/volume" && method === "GET") {
+      try {
+        const rep = await helperCall({ cmd: "volumeget" }, 4000);
+        const v = Number(rep.volume);
+        return jsonResponse(res, 200, { ok: v >= 0, volume: isFinite(v) && v >= 0 ? v : null });
+      } catch (e) {
+        return jsonResponse(res, 200, { ok: false, volume: null, error: e.message });
+      }
+    }
+    if (p === "/api/volume" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const v = Number(b.volume);
+      if (!isFinite(v)) return jsonResponse(res, 400, { error: "volume non valido" });
+      const vol = Math.max(0, Math.min(100, Math.round(v)));
+      try {
+        await helperCall({ cmd: "volumeset", volume: vol }, 4000);
+        return jsonResponse(res, 200, { ok: true, volume: vol });
+      } catch (e) {
+        return jsonResponse(res, 200, { ok: false, error: e.message });
+      }
     }
     if (p === "/api/files" && method === "GET") {
       return listFiles(url, res);

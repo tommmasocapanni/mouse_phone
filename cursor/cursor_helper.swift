@@ -2,6 +2,7 @@ import CoreGraphics
 import Foundation
 import ApplicationServices
 import AppKit
+import CoreAudio
 
 let displayBounds = CGDisplayBounds(CGMainDisplayID())
 
@@ -272,6 +273,98 @@ func execJSInBrowser(browser: String, js: String) -> (Bool, String) {
     return runAppleScript(source)
 }
 
+// MARK: - Uscita audio (CoreAudio)
+//
+// Elenca i dispositivi di output e imposta quello di sistema (default output).
+// Non richiede permessi speciali. Si usa l'elemento 0 (Main/Master) per evitare
+// dipendenze dalla versione dell'SDK.
+
+let kAOMainElement: AudioObjectPropertyElement = 0
+
+func audioAddress(_ selector: AudioObjectPropertySelector,
+                  _ scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal) -> AudioObjectPropertyAddress {
+    return AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAOMainElement)
+}
+
+func audioCFString(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String {
+    var addr = audioAddress(selector)
+    var cf: Unmanaged<CFString>?
+    var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+    let st = AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &cf)
+    if st == noErr, let cf = cf { return cf.takeRetainedValue() as String }
+    return ""
+}
+
+func audioHasOutput(_ id: AudioDeviceID) -> Bool {
+    var addr = audioAddress(kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeOutput)
+    var size: UInt32 = 0
+    if AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) != noErr || size == 0 { return false }
+    let raw = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
+    defer { raw.deallocate() }
+    if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, raw) != noErr { return false }
+    let abl = UnsafeMutableAudioBufferListPointer(raw.assumingMemoryBound(to: AudioBufferList.self))
+    var channels = 0
+    for buf in abl { channels += Int(buf.mNumberChannels) }
+    return channels > 0
+}
+
+func audioDefaultOutput() -> AudioDeviceID {
+    var addr = audioAddress(kAudioHardwarePropertyDefaultOutputDevice)
+    var dev = AudioDeviceID(0)
+    var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &dev)
+    return dev
+}
+
+func audioDeviceIDs() -> [AudioDeviceID] {
+    var addr = audioAddress(kAudioHardwarePropertyDevices)
+    var size: UInt32 = 0
+    if AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) != noErr { return [] }
+    let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+    var ids = [AudioDeviceID](repeating: 0, count: count)
+    if AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) != noErr { return [] }
+    return ids
+}
+
+func audioOutputs() -> [[String: Any]] {
+    let def = audioDefaultOutput()
+    var out: [[String: Any]] = []
+    for id in audioDeviceIDs() where audioHasOutput(id) {
+        out.append([
+            "id": Int(id),
+            "uid": audioCFString(id, kAudioDevicePropertyDeviceUID),
+            "name": audioCFString(id, kAudioDevicePropertyDeviceNameCFString),
+            "default": id == def,
+        ])
+    }
+    return out
+}
+
+func setDefaultOutput(_ id: AudioDeviceID) -> Bool {
+    var addr = audioAddress(kAudioHardwarePropertyDefaultOutputDevice)
+    var dev = id
+    let st = AudioObjectSetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil,
+                                        UInt32(MemoryLayout<AudioDeviceID>.size), &dev)
+    return st == noErr
+}
+
+// Volume di sistema dell'uscita attiva (0..100). Usa gli Standard Additions di
+// AppleScript ("set volume"), che agiscono sull'uscita corrente senza permessi
+// di Automazione aggiuntivi.
+func getSystemVolume() -> Int {
+    let (ok, res) = runAppleScript("output volume of (get volume settings)")
+    if ok, let v = Int(res.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        return max(0, min(100, v))
+    }
+    return -1
+}
+
+func setSystemVolume(_ v: Int) -> Bool {
+    let clamped = max(0, min(100, v))
+    let (ok, _) = runAppleScript("set volume output volume \(clamped)")
+    return ok
+}
+
 struct Command: Decodable {
     let cmd: String
     let id: Int?
@@ -291,6 +384,8 @@ struct Command: Decodable {
     let source: String?
     let js: String?
     let visible: Bool?
+    let deviceId: Int?
+    let volume: Int?
 }
 
 let trusted = isTrusted()
@@ -363,6 +458,37 @@ stdin.readabilityHandler = { handle in
                 }
             } else {
                 emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "js mancante"])
+            }
+        case "audiolist":
+            DispatchQueue.main.async {
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": true, "data": audioOutputs()])
+            }
+        case "audioset":
+            if let deviceId = cmd.deviceId {
+                DispatchQueue.main.async {
+                    let ok = setDefaultOutput(AudioDeviceID(deviceId))
+                    if ok {
+                        emit(["type": "reply", "id": cmd.id ?? 0, "ok": true])
+                    } else {
+                        emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "impossibile impostare l'uscita"])
+                    }
+                }
+            } else {
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "deviceId mancante"])
+            }
+        case "volumeget":
+            DispatchQueue.main.async {
+                let v = getSystemVolume()
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": v >= 0, "volume": v])
+            }
+        case "volumeset":
+            if let volume = cmd.volume {
+                DispatchQueue.main.async {
+                    let ok = setSystemVolume(volume)
+                    emit(["type": "reply", "id": cmd.id ?? 0, "ok": ok])
+                }
+            } else {
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "volume mancante"])
             }
         default:
             break

@@ -18,6 +18,7 @@
     bookmarks: [],
     settings: null,
     displays: [],
+    audio: [],
     target: null,
     loaded: false,
   };
@@ -110,17 +111,32 @@
   function render() {
     bodyEl.textContent = "";
     bodyEl.append(sectionLauncher());
-    bodyEl.append(sectionNowPlaying());
     applyOffline();
   }
 
   function sectionLauncher() {
-    const head = h("div", { class: "cine-sec-head" }, h("strong", { text: "01 / COSA GUARDIAMO?" }));
     const grid = h("div", { class: "tile-grid" });
     grid.append(moviesTile());
     for (const bm of state.bookmarks) grid.append(bookmarkTile(bm));
     grid.append(addTile());
-    return h("section", { class: "cine-sec" }, head, displayBar(), grid);
+    return h("section", { class: "cine-sec" }, barsRow(), grid);
+  }
+
+  function barsRow() {
+    return h("div", { class: "cine-bars" }, displayBar(), audioBar());
+  }
+
+  function audioBar() {
+    return h("button", { class: "cine-bar", onclick: () => { dot.haptic(); openAudioSheet(); } },
+      h("span", { class: "cine-bar-k", text: "AUDIO" }),
+      h("span", { class: "cine-bar-v", text: currentAudioLabel() }),
+      h("span", { class: "cine-bar-caret", text: "›" })
+    );
+  }
+
+  function currentAudioLabel() {
+    const d = (state.audio || []).find((x) => x.default);
+    return d ? (d.name || "USCITA") : "—";
   }
 
   function castSvg() {
@@ -179,12 +195,38 @@
     castModalEl.setAttribute("aria-hidden", "true");
   }
 
-  // ---------- now playing (controllo player via iniezione JS) ----------
+  // ---------- now playing (mini-player + schermata a tutto schermo) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false };
-  let npBarEl, npPlayBtn, npTitleEl, npCurEl, npDurEl, npFillEl, npTrackEl, npSkipBtn, npAutoBtn;
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, mode: "none" };
   try { np.auto = localStorage.getItem("dot_autoskip") === "1"; } catch (_) {}
+
+  const npMini = document.getElementById("npMini");
+  const npMiniArt = document.getElementById("npMiniArt");
+  const npMiniTitle = document.getElementById("npMiniTitle");
+  const npMiniSub = document.getElementById("npMiniSub");
+  const npMiniPlay = document.getElementById("npMiniPlay");
+  const npFull = document.getElementById("npFull");
+  const npFullDown = document.getElementById("npFullDown");
+  const npFullAudio = document.getElementById("npFullAudio");
+  const npVol = document.getElementById("npVol");
+  const npVolTrack = document.getElementById("npVolTrack");
+  const npVolFill = document.getElementById("npVolFill");
+  const npVolThumb = document.getElementById("npVolThumb");
+  const npVolVal = document.getElementById("npVolVal");
+  const npBack = document.getElementById("npBack");
+  const npFwd = document.getElementById("npFwd");
+  const npFullArt = document.getElementById("npFullArt");
+  const npFullTitle = document.getElementById("npFullTitle");
+  const npFullSite = document.getElementById("npFullSite");
+  const npFullTrack = document.getElementById("npFullTrack");
+  const npFullFill = document.getElementById("npFullFill");
+  const npFullCur = document.getElementById("npFullCur");
+  const npFullDur = document.getElementById("npFullDur");
+  const npFullPlay = document.getElementById("npFullPlay");
+  const npFullSkip = document.getElementById("npFullSkip");
+  const npFullAuto = document.getElementById("npFullAuto");
+  if (npFullAuto) npFullAuto.classList.toggle("active", np.auto);
 
   function fmtTime(s) {
     s = Math.max(0, Math.floor(Number(s) || 0));
@@ -195,61 +237,134 @@
     return (h ? h + ":" : "") + mm + ":" + String(ss).padStart(2, "0");
   }
 
-  function setNpIcon(paused) {
-    if (npPlayBtn) npPlayBtn.innerHTML = paused ? NP_PLAY_SVG : NP_PAUSE_SVG;
+  function setNpIcons(paused) {
+    const svgMarkup = paused ? NP_PLAY_SVG : NP_PAUSE_SVG;
+    if (npMiniPlay) npMiniPlay.innerHTML = svgMarkup;
+    if (npFullPlay) npFullPlay.innerHTML = svgMarkup;
   }
 
-  function sectionNowPlaying() {
-    const head = h("div", { class: "cine-sec-head" }, h("strong", { text: "02 / ORA IN RIPRODUZIONE" }));
-
-    npPlayBtn = h("button", { class: "np-play", type: "button", "aria-label": "Play / Pausa", onclick: npToggle });
-    setNpIcon(true);
-
-    npTitleEl = h("div", { class: "np-title", text: "—" });
-    npCurEl = h("span", { class: "np-cur", text: "0:00" });
-    npDurEl = h("span", { class: "np-dur", text: "0:00" });
-    const info = h("div", { class: "np-info" }, npTitleEl,
-      h("div", { class: "np-time" }, npCurEl, h("span", { class: "np-sep", text: " / " }), npDurEl));
-
-    npFillEl = h("div", { class: "np-fill" });
-    npTrackEl = h("div", { class: "np-track", onclick: onNpSeek }, npFillEl);
-
-    npSkipBtn = h("button", { class: "cs-chip np-skip", type: "button", text: "SALTA", onclick: npSkip });
-    npAutoBtn = h("button", { class: "cs-chip np-auto" + (np.auto ? " active" : ""), type: "button", text: "AUTO-SKIP", onclick: npToggleAuto });
-    const actions = h("div", { class: "np-actions" }, npSkipBtn, npAutoBtn);
-
-    npBarEl = h("div", { class: "np-bar idle" }, h("div", { class: "np-row" }, npPlayBtn, info), npTrackEl, actions);
-    return h("section", { class: "cine-sec" }, head, npBarEl);
+  function setArt(el, art, site) {
+    let url = art || "";
+    if (!url && site) url = "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(site) + "&sz=128";
+    if (url) { el.style.backgroundImage = "url(" + JSON.stringify(url) + ")"; el.classList.add("has-art"); }
+    else { el.style.backgroundImage = ""; el.classList.remove("has-art"); }
   }
+
+  function openNpFull() {
+    if (np.mode !== "media") return;
+    dot.haptic();
+    npFull.classList.add("show");
+    npFull.setAttribute("aria-hidden", "false");
+  }
+  function closeNpFull() {
+    npFull.classList.remove("show");
+    npFull.setAttribute("aria-hidden", "true");
+    closeVol();
+  }
+
+  // ---------- volume di sistema (slider verticale) ----------
+  let volValue = null;
+  let volDragging = false;
+  let volSendTimer = null;
+
+  function renderVol() {
+    const v = volValue == null ? 0 : volValue;
+    npVolFill.style.height = v + "%";
+    npVolThumb.style.bottom = v + "%";
+    npVolVal.textContent = volValue == null ? "—" : String(Math.round(v));
+  }
+
+  function openVol() {
+    npVol.classList.add("show");
+    npVol.setAttribute("aria-hidden", "false");
+    npFullAudio.classList.add("active");
+    loadVolume();
+  }
+  function closeVol() {
+    npVol.classList.remove("show");
+    npVol.setAttribute("aria-hidden", "true");
+    npFullAudio.classList.remove("active");
+  }
+  function toggleVol() {
+    dot.haptic();
+    if (npVol.classList.contains("show")) closeVol();
+    else openVol();
+  }
+
+  async function loadVolume() {
+    try {
+      const r = await api("/api/volume", { method: "GET" });
+      if (r && typeof r.volume === "number") { volValue = r.volume; renderVol(); }
+    } catch (_) {}
+  }
+
+  function setVolumeAt(clientY) {
+    const rect = npVolTrack.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, 1 - (clientY - rect.top) / Math.max(1, rect.height)));
+    volValue = Math.round(ratio * 100);
+    renderVol();
+    if (volSendTimer) clearTimeout(volSendTimer);
+    volSendTimer = setTimeout(() => {
+      api("/api/volume", { method: "POST", body: { volume: volValue } }).catch(() => {});
+    }, 130);
+  }
+
+  npVolTrack.addEventListener("pointerdown", (e) => {
+    volDragging = true;
+    dot.haptic();
+    try { npVolTrack.setPointerCapture(e.pointerId); } catch (_) {}
+    setVolumeAt(e.clientY);
+  });
+  npVolTrack.addEventListener("pointermove", (e) => { if (volDragging) setVolumeAt(e.clientY); });
+  npVolTrack.addEventListener("pointerup", () => { volDragging = false; });
+  npVolTrack.addEventListener("pointercancel", () => { volDragging = false; });
+  npVol.addEventListener("pointerdown", (e) => e.stopPropagation());
 
   function applyNp(d) {
-    if (!npBarEl) return;
-    if (!d || !d.found) {
-      np.found = false;
+    const found = !!(d && d.found);
+    np.found = found;
+
+    if (!found && d && (d.reason === "permission" || d.reason === "no-browser")) {
+      np.mode = "hint";
       np.paused = true;
-      setNpIcon(true);
-      npTitleEl.textContent =
-        d && d.reason === "permission" ? "ABILITA JS DA APPLE EVENTS NEL BROWSER ⚙"
-          : d && d.reason === "no-browser" ? "SELEZIONA UN BROWSER SPECIFICO ⚙"
-            : "NESSUN MEDIA IN RIPRODUZIONE";
-      npCurEl.textContent = "0:00";
-      npDurEl.textContent = "0:00";
-      npFillEl.style.width = "0%";
-      npBarEl.classList.add("idle");
-      if (npSkipBtn) npSkipBtn.classList.add("disabled");
+      setNpIcons(true);
+      npMini.classList.add("show");
+      document.getElementById("cinema").classList.add("has-np");
+      setArt(npMiniArt, "", "");
+      npMiniTitle.textContent = d.reason === "no-browser" ? "SELEZIONA UN BROWSER SPECIFICO" : "ABILITA JS DA APPLE EVENTS";
+      npMiniSub.textContent = "TOCCA PER LE IMPOSTAZIONI ⚙";
+      npMiniPlay.style.visibility = "hidden";
       return;
     }
-    np.found = true;
+
+    if (!found) {
+      np.mode = "none";
+      closeNpFull();
+      npMini.classList.remove("show");
+      document.getElementById("cinema").classList.remove("has-np");
+      return;
+    }
+
+    np.mode = "media";
     np.paused = !!d.paused;
     np.current = Number(d.current) || 0;
     np.duration = Number(d.duration) || 0;
-    setNpIcon(np.paused);
-    npTitleEl.textContent = d.title || "MEDIA";
-    npCurEl.textContent = fmtTime(np.current);
-    npDurEl.textContent = fmtTime(np.duration);
-    npFillEl.style.width = (np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0) + "%";
-    npBarEl.classList.remove("idle");
-    if (npSkipBtn) npSkipBtn.classList.remove("disabled");
+
+    npMini.classList.add("show");
+    document.getElementById("cinema").classList.add("has-np");
+    npMiniPlay.style.visibility = "";
+    setNpIcons(np.paused);
+    setArt(npMiniArt, d.art, d.site);
+    npMiniTitle.textContent = d.title || "MEDIA";
+    npMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) + (d.site ? " · " + d.site : "");
+
+    setArt(npFullArt, d.art, d.site);
+    npFullTitle.textContent = d.title || "MEDIA";
+    npFullSite.textContent = d.site || d.url || "";
+    npFullCur.textContent = fmtTime(np.current);
+    npFullDur.textContent = fmtTime(np.duration);
+    const pct = np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0;
+    npFullFill.style.width = pct + "%";
   }
 
   async function pollNp() {
@@ -269,28 +384,77 @@
   function stopNp() {
     np.running = false;
     if (np.timer) { clearInterval(np.timer); np.timer = null; }
+    closeNpFull();
   }
 
   async function npToggle() {
+    if (np.mode === "hint") { openSettingsSheet(); return; }
     if (!np.found) { pollNp(); return; }
     if (!ensureOnline()) return;
     dot.haptic();
     const newPaused = !np.paused;
     np.paused = newPaused;
-    setNpIcon(newPaused);
+    setNpIcons(newPaused);
     try { await api("/api/player", { method: "POST", body: { action: newPaused ? "pause" : "play" } }); } catch (_) {}
     pollNp();
   }
 
   function onNpSeek(e) {
     if (!np.found || !np.duration) return;
-    const rect = npTrackEl.getBoundingClientRect();
+    const rect = npFullTrack.getBoundingClientRect();
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
     const sec = ratio * np.duration;
-    npFillEl.style.width = ratio * 100 + "%";
-    npCurEl.textContent = fmtTime(sec);
+    npFullFill.style.width = ratio * 100 + "%";
+    npFullCur.textContent = fmtTime(sec);
     dot.haptic();
     api("/api/seek", { method: "POST", body: { seconds: sec } }).catch(() => {});
+  }
+
+  function npSeekBy(delta) {
+    if (!np.found) return;
+    if (!ensureOnline()) return;
+    dot.haptic();
+    const target = Math.max(0, np.duration > 0 ? Math.min(np.duration, np.current + delta) : np.current + delta);
+    np.current = target;
+    npFullCur.textContent = fmtTime(target);
+    if (np.duration > 0) npFullFill.style.width = Math.min(100, (target / np.duration) * 100) + "%";
+    api("/api/seek", { method: "POST", body: { delta } }).catch(() => {});
+  }
+
+  async function openAudioSheet() {
+    dot.haptic();
+    const list = h("div", { class: "cs-diag", text: "carico…" });
+    openSheet(h("div", {}, sheetHead("USCITA AUDIO"), h("div", { class: "cs-label", text: "DISPOSITIVO" }), list));
+    try {
+      const r = await api("/api/audio/devices", { method: "GET" });
+      state.audio = (r && r.devices) || [];
+      list.className = "cs-audio";
+      list.textContent = "";
+      if (!state.audio.length) {
+        list.className = "cs-diag";
+        list.textContent = r && r.error ? "ERRORE · " + r.error : "NESSUN DISPOSITIVO DI OUTPUT";
+        return;
+      }
+      for (const d of state.audio) {
+        const row = h("button", { class: "cs-audio-item" + (d.default ? " active" : ""), type: "button" },
+          h("span", { class: "cs-audio-name", text: d.name || ("Device " + d.id) }),
+          h("span", { class: "cs-audio-tag", text: d.default ? "ATTIVO" : "" })
+        );
+        row.addEventListener("click", async () => {
+          dot.haptic();
+          try {
+            await api("/api/audio/output", { method: "POST", body: { deviceId: d.id } });
+            dot.toast("AUDIO · " + String(d.name || "").toUpperCase().slice(0, 18));
+            openAudioSheet();
+          } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
+        });
+        list.append(row);
+      }
+      render();
+    } catch (e) {
+      list.className = "cs-diag err";
+      list.textContent = "ERRORE · " + e.message;
+    }
   }
 
   async function npSkip() {
@@ -307,11 +471,27 @@
   function npToggleAuto() {
     dot.haptic();
     np.auto = !np.auto;
-    if (npAutoBtn) npAutoBtn.classList.toggle("active", np.auto);
+    if (npFullAuto) npFullAuto.classList.toggle("active", np.auto);
     try { localStorage.setItem("dot_autoskip", np.auto ? "1" : "0"); } catch (_) {}
     dot.toast(np.auto ? "AUTO-SKIP ON" : "AUTO-SKIP OFF");
     if (np.auto) pollNp();
   }
+
+  npMini.addEventListener("click", (e) => {
+    if (e.target.closest("#npMiniPlay")) return;
+    if (np.mode === "hint") { openSettingsSheet(); return; }
+    openNpFull();
+  });
+  npMiniPlay.addEventListener("click", (e) => { e.stopPropagation(); npToggle(); });
+  npFullPlay.addEventListener("click", npToggle);
+  npFullDown.addEventListener("click", closeNpFull);
+  npFullAudio.addEventListener("click", toggleVol);
+  npBack.addEventListener("click", () => npSeekBy(-5));
+  npFwd.addEventListener("click", () => npSeekBy(5));
+  npFullSkip.addEventListener("click", npSkip);
+  npFullAuto.addEventListener("click", npToggleAuto);
+  npFullTrack.addEventListener("click", onNpSeek);
+  npFull.addEventListener("click", (e) => { if (e.target === npFull) { closeNpFull(); return; } if (!e.target.closest("#npVol") && !e.target.closest("#npFullAudio")) closeVol(); });
 
   document.addEventListener("dot:cinema", (e) => {
     if (e.detail && e.detail.open) startNp();
@@ -618,6 +798,9 @@
       render();
       api("/api/displays")
         .then((r) => { state.displays = r.displays || []; render(); })
+        .catch(() => {});
+      api("/api/audio/devices")
+        .then((r) => { state.audio = (r && r.devices) || []; render(); })
         .catch(() => {});
     } catch (e) {
       bodyEl.textContent = "";
