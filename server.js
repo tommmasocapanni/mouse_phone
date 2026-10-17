@@ -302,6 +302,9 @@ function startHelper() {
           if (!helperTrusted) {
             console.log("⚠️  Concedi il permesso Accessibilità al terminale, poi riavvia con `npm start`");
           }
+        } else if (msg.type === "gestureDiagnostic") {
+          console.log(`Mission Control: ${msg.method || "unknown"}`);
+          broadcast({ type: "gestureDiagnostic", action: msg.action, method: msg.method });
         }
       } catch (_) {}
     }
@@ -1031,6 +1034,11 @@ function handleMessage(msg) {
     case "space":
       if (msg.dir === "left" || msg.dir === "right") {
         switchSpace(msg.dir);
+      }
+      break;
+    case "gesture":
+      if (msg.action === "missionControl") {
+        sendHelper({ cmd: "gesture", action: "missionControl" });
       }
       break;
     case "media":

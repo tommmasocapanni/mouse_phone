@@ -98,6 +98,41 @@ func pressKey(name: String, command: Bool, control: Bool = false) {
     up.post(tap: .cghidEventTap)
 }
 
+func openMissionControlApp() -> Bool {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    process.arguments = ["-a", "Mission Control"]
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    } catch {
+        return false
+    }
+}
+
+func missionControl() {
+    // Usa prima F9; se l'invio fallisce prova Ctrl+↑ e infine l'avvio dell'app.
+    let (sent, error) = runAppleScript("tell application \"System Events\" to key code 101")
+    if sent {
+        emit(["type": "gestureDiagnostic", "action": "missionControl", "method": "f9"])
+        return
+    }
+    fputs("Mission Control F9 failed: \(error)\n", stderr)
+    let (controlUpSent, controlUpError) = runAppleScript("tell application \"System Events\" to key code 126 using control down")
+    if controlUpSent {
+        emit(["type": "gestureDiagnostic", "action": "missionControl", "method": "control-up"])
+        return
+    }
+    fputs("Mission Control Ctrl+Up failed: \(controlUpError)\n", stderr)
+    fputs("Mission Control fallback: open-app\n", stderr)
+    if openMissionControlApp() {
+        emit(["type": "gestureDiagnostic", "action": "missionControl", "method": "open-app"])
+        return
+    }
+    emit(["type": "gestureDiagnostic", "action": "missionControl", "method": "failed"])
+}
+
 let mediaKeys: [String: Int32] = [
     "volup": 0, "voldown": 1, "mute": 7, "play": 16, "next": 17, "prev": 18,
 ]
@@ -414,6 +449,7 @@ func setSystemVolume(_ v: Int) -> Bool {
 
 struct Command: Decodable {
     let cmd: String
+    let action: String?
     let id: Int?
     let x: Double?
     let y: Double?
@@ -464,6 +500,8 @@ stdin.readabilityHandler = { handle in
             click(button: cmd.button ?? "left")
         case "doubleclick":
             doubleClick(button: cmd.button ?? "left")
+        case "gesture":
+            if cmd.action == "missionControl" { missionControl() }
         case "scroll":
             scroll(dx: cmd.dx ?? 0, dy: cmd.dy ?? 0)
         case "text":

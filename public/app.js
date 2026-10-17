@@ -15,6 +15,7 @@
   const SCROLL_DIV = 1.25;
   const SWIPE_DIST = 55;
   const SWIPE_RATIO = 1.5;
+  const MISSION_CONTROL_DEBOUNCE_MS = 600;
   const SHAKE_DELTA = 20;
   const ORI_SHAKE_DELTA = 62;
   const SHAKE_WINDOW = 800;
@@ -50,6 +51,7 @@
   const precisionBtn = $("precision");
   const invXBtn = $("invX");
   const invYBtn = $("invY");
+  const missionControlBtn = $("missionControl");
   const ptr = $("ptr");
   const ptrLabel = $("ptrLabel");
   const confirmEl = $("confirm");
@@ -57,7 +59,7 @@
   const confirmCancel = $("confirmCancel");
 
   const settings = Object.assign(
-    { sens: 50, precision: false, invX: false, invY: false },
+    { sens: 50, precision: false, invX: false, invY: false, missionControl: true },
     JSON.parse(localStorage.getItem("mouse_phone.v4") || "{}")
   );
 
@@ -83,6 +85,9 @@
   let flushTimer = null;
   let lastFlushAt = 0;
   let lastEventAt = performance.now();
+  let lastMissionControlAt = 0;
+  let diagnosticNotice = "";
+  let diagnosticTimer = null;
   let disconnectedSince = 0;
   let hasEverConnected = false;
   let lastHardReloadAt = 0;
@@ -199,6 +204,11 @@
 
   function updateDiag(up) {
     if (!diagEl) return;
+    if (diagnosticNotice) {
+      diagEl.textContent = diagnosticNotice;
+      diagEl.classList.add("show");
+      return;
+    }
     const standalone = !!window.navigator.standalone;
     if (up || (!standalone && attempts < 1)) {
       diagEl.classList.remove("show");
@@ -228,6 +238,18 @@
 
   function handleServerMessage(msg) {
     if (!msg || typeof msg !== "object") return;
+    if (msg.type === "gestureDiagnostic" && msg.action === "missionControl") {
+      diagnosticNotice = `MISSION CONTROL · ${String(msg.method || "METODO SCONOSCIUTO").toUpperCase()}`;
+      updateDiag(connected && powerOn);
+      clearTimeout(diagnosticTimer);
+      diagnosticTimer = setTimeout(() => {
+        diagnosticNotice = "";
+        updateDiag(connected && powerOn);
+      }, 6000);
+      if (msg.method === "failed") {
+        toastMsg("SE NON SI APRE: ATTIVA CTRL+↑ IN TASTIERA > SCORCIATOIE > MISSION CONTROL");
+      }
+    }
     if (msg.type === "status") {
       if (msg.hostname) hostname = msg.hostname;
       if (msg.trusted === false) toastMsg("MANCA PERMESSO ACCESSIBILITÀ SUL MAC");
@@ -425,6 +447,11 @@
     }
     if (navigator.vibrate) navigator.vibrate(8);
     else audioTick();
+  }
+
+  function gestureHapticTick() {
+    if (!progSwitch) return;
+    try { progSwitch.label.click(); } catch (_) {}
   }
 
   function injectHaptic(el) {
@@ -852,8 +879,9 @@
         const pts = [...pointers.values()];
         threeFinger = {
           fired: false,
-          x0: (pts[0].x + pts[1].x + pts[2].x) / 3,
-          y0: (pts[0].y + pts[1].y + pts[2].y) / 3,
+          pointerIds: [...pointers.keys()],
+          x0: pts.reduce((sum, p) => sum + p.x, 0) / 3,
+          y0: pts.reduce((sum, p) => sum + p.y, 0) / 3,
         };
       }
     }
@@ -875,8 +903,8 @@
       }
       moveBy(dx, dy);
     } else if (pointers.size >= 3 && threeFinger) {
-      // swipe orizzontale con 3 dita -> cambia scrivania sul Mac
-      const pts = [...pointers.values()];
+      const pts = threeFinger.pointerIds.map((id) => pointers.get(id)).filter(Boolean);
+      if (pts.length !== 3) return;
       let sx = 0;
       let sy = 0;
       for (const p of pts) {
@@ -888,7 +916,19 @@
       if (!threeFinger.fired) {
         const dx = cx - threeFinger.x0;
         const dy = cy - threeFinger.y0;
-        if (Math.abs(dx) > SWIPE_DIST && Math.abs(dx) > Math.abs(dy) * SWIPE_RATIO) {
+        // L'asse dominante seleziona una sola azione e lascia inattive le diagonali ambigue.
+        if (Math.abs(dy) > Math.abs(dx) * SWIPE_RATIO && Math.abs(dy) > SWIPE_DIST) {
+          threeFinger.fired = true;
+          if (dy < 0 && settings.missionControl && Date.now() - lastMissionControlAt >= MISSION_CONTROL_DEBOUNCE_MS) {
+            lastMissionControlAt = Date.now();
+            send({ type: "gesture", action: "missionControl" });
+            pad.classList.remove("mission-control-flash");
+            requestAnimationFrame(() => pad.classList.add("mission-control-flash"));
+            setTimeout(() => pad.classList.remove("mission-control-flash"), 500);
+            gestureHapticTick();
+            toastMsg("MISSION CONTROL");
+          }
+        } else if (Math.abs(dx) > SWIPE_DIST && Math.abs(dx) > Math.abs(dy) * SWIPE_RATIO) {
           threeFinger.fired = true;
           // dita a destra -> scrivania a sinistra (come il trackpad del Mac)
           const dir = dx > 0 ? "left" : "right";
@@ -941,7 +981,7 @@
     // fine dello scroll a due dita -> avvia l'inerzia
     if (twoFinger && before === 2 && twoFinger.moved) startMomentum();
     if (pointers.size < 2) twoFinger = null;
-    if (pointers.size < 3) threeFinger = null;
+    if (threeFinger && !threeFinger.pointerIds.every((id) => pointers.has(id))) threeFinger = null;
 
     if (pointers.size === 0) {
       if (press) {
@@ -1219,6 +1259,8 @@
     precisionBtn.classList.toggle("active", settings.precision);
     invXBtn.classList.toggle("active", settings.invX);
     invYBtn.classList.toggle("active", settings.invY);
+    missionControlBtn.classList.toggle("active", settings.missionControl);
+    missionControlBtn.setAttribute("aria-pressed", String(settings.missionControl));
   }
 
   precisionBtn.addEventListener("click", () => {
@@ -1237,6 +1279,13 @@
     paintChips();
     save();
   });
+  missionControlBtn.addEventListener("click", () => {
+    settings.missionControl = !settings.missionControl;
+    paintChips();
+    save();
+    hapticTick();
+  });
+  paintChips();
 
   // ---------- pull to refresh ----------
   const PTR_THRESHOLD = 78;

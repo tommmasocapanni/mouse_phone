@@ -1308,10 +1308,30 @@ body {
 
 .trackpad.edgeflash:before { animation: edgeflash .3s ease; }
 
+.trackpad.mission-control-flash:before {
+  inset: 22%;
+  border-radius: 14px;
+  background-image: radial-gradient(var(--ink) 1px, transparent 1.5px);
+  background-size: 12px 12px;
+  animation: missiongrid .46s cubic-bezier(.2, .8, .2, 1) both;
+}
+
 @keyframes edgeflash {
   0% { box-shadow: inset 0 0 0 0 #ed473c00; }
   35% { box-shadow: inset 0 0 0 3px #ed473c33; }
   100% { box-shadow: inset 0 0 0 0 #ed473c00; }
+}
+
+@keyframes missiongrid {
+  0% { opacity: 0; transform: scale(.55); }
+  35% { opacity: .7; transform: scale(.82); }
+  100% { opacity: 0; transform: scale(1.12); }
+}
+
+@keyframes missiongridfade {
+  0% { opacity: 0; }
+  35% { opacity: .7; }
+  100% { opacity: 0; }
 }
 
 .lower { z-index: 3; padding-top: 26px; }
@@ -1774,6 +1794,7 @@ body {
   .np-coverflow:not(.ready) .np-cover-card,
   .np-cover-card.is-entering { translate: 0 0; scale: 1; }
   .np-cover-card.is-exiting { translate: 0 0; scale: 1; }
+  .trackpad.mission-control-flash:before { animation: missiongridfade .15s ease-out both; }
 }
 
 @media (max-height: 700px) {
