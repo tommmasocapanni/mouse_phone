@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v18";
+  const BUILD = "v19";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -13,9 +13,10 @@
   const SCROLL_DIV = 1.25;
   const SWIPE_DIST = 55;
   const SWIPE_RATIO = 1.5;
-  const SHAKE_DELTA = 27;
-  const SHAKE_WINDOW = 700;
-  const SHAKE_COOLDOWN = 1200;
+  const SHAKE_DELTA = 20;
+  const ORI_SHAKE_DELTA = 62;
+  const SHAKE_WINDOW = 800;
+  const SHAKE_COOLDOWN = 1500;
 
   // pulisce eventuali query di cache-busting (?r=...) dall'URL, così la barra
   // resta pulita e l'icona salvata su Home non memorizza il parametro.
@@ -83,6 +84,7 @@
   let edgeX = 0;
   let edgeY = 0;
   let shakePrev = null;
+  let oriShakePrev = null;
   let shakeAt = -1e9;
   let joltTimes = [];
 
@@ -412,32 +414,64 @@
   }
 
   // ---------- sensori ----------
-  async function ensureSensors() {
-    if (sensorsOn) return;
+  // Su iOS i permessi vanno richiesti DENTRO il gesto utente e SENZA await prima:
+  // se aspettiamo il primo, il secondo (accelerometro) viene ignorato. Li lanciamo
+  // quindi insieme, poi risolviamo.
+  function ensureSensors() {
+    const tasks = [];
     try {
-      if (typeof DeviceOrientationEvent === "undefined") return;
-      if (typeof DeviceOrientationEvent.requestPermission === "function") {
-        const res = await DeviceOrientationEvent.requestPermission();
-        if (res !== "granted") return;
+      if (!sensorsOn && typeof DeviceOrientationEvent !== "undefined") {
+        if (typeof DeviceOrientationEvent.requestPermission === "function") {
+          tasks.push(
+            DeviceOrientationEvent.requestPermission()
+              .then((r) => {
+                if (r === "granted") {
+                  window.addEventListener("deviceorientation", onOrientation);
+                  sensorsOn = true;
+                }
+              })
+              .catch(() => {})
+          );
+        } else {
+          window.addEventListener("deviceorientation", onOrientation);
+          sensorsOn = true;
+        }
       }
-      window.addEventListener("deviceorientation", onOrientation);
-      sensorsOn = true;
-
-      // accelerometro -> shake (chiudi la tab)
-      if (typeof DeviceMotionEvent !== "undefined" && !motionOn) {
+      if (!motionOn && typeof DeviceMotionEvent !== "undefined") {
         if (typeof DeviceMotionEvent.requestPermission === "function") {
-          let r = "granted";
-          try { r = await DeviceMotionEvent.requestPermission(); } catch (_) {}
-          if (r === "granted") { window.addEventListener("devicemotion", onMotion); motionOn = true; }
+          tasks.push(
+            DeviceMotionEvent.requestPermission()
+              .then((r) => {
+                if (r === "granted") {
+                  window.addEventListener("devicemotion", onMotion);
+                  motionOn = true;
+                  toastMsg("SHAKE ATTIVO · SCUOTI IL TELEFONO");
+                } else {
+                  toastMsg("SHAKE: PERMESSO MOVIMENTO NEGATO");
+                }
+              })
+              .catch(() => {})
+          );
         } else {
           window.addEventListener("devicemotion", onMotion);
           motionOn = true;
         }
       }
     } catch (_) {}
+    return Promise.all(tasks);
   }
 
   // shake: due scossoni ravvicinati -> alert di conferma
+  function shakeJolt(now) {
+    joltTimes.push(now);
+    joltTimes = joltTimes.filter((t) => now - t < SHAKE_WINDOW);
+    if (joltTimes.length >= 2 && now - shakeAt > SHAKE_COOLDOWN) {
+      shakeAt = now;
+      joltTimes = [];
+      openConfirm();
+    }
+  }
+
   function onMotion(e) {
     if (!powerOn || !confirmEl.hidden) {
       shakePrev = null;
@@ -445,20 +479,11 @@
     }
     const a = e.accelerationIncludingGravity || e.acceleration;
     if (!a || a.x == null) return;
-    const now = performance.now();
     if (!shakePrev) { shakePrev = { x: a.x, y: a.y, z: a.z }; return; }
     const delta =
       Math.abs(a.x - shakePrev.x) + Math.abs(a.y - shakePrev.y) + Math.abs(a.z - shakePrev.z);
     shakePrev = { x: a.x, y: a.y, z: a.z };
-    if (delta > SHAKE_DELTA) {
-      joltTimes.push(now);
-      joltTimes = joltTimes.filter((t) => now - t < SHAKE_WINDOW);
-      if (joltTimes.length >= 2 && now - shakeAt > SHAKE_COOLDOWN) {
-        shakeAt = now;
-        joltTimes = [];
-        openConfirm();
-      }
-    }
+    if (delta > SHAKE_DELTA) shakeJolt(performance.now());
   }
 
   function openConfirm() {
@@ -495,6 +520,17 @@
 
   function onOrientation(e) {
     if (e.alpha == null || e.beta == null) return;
+
+    // shake (fallback): se l'accelerometro non è disponibile usiamo l'orientamento,
+    // che è sempre attivo perché serve al puntatore.
+    if (typeof e.beta === "number" && typeof e.gamma === "number") {
+      if (powerOn && confirmEl.hidden && oriShakePrev) {
+        const d = Math.abs(e.beta - oriShakePrev.b) + Math.abs(e.gamma - oriShakePrev.g);
+        if (d > ORI_SHAKE_DELTA && d < 180) shakeJolt(performance.now());
+      }
+      oriShakePrev = { b: e.beta, g: e.gamma };
+    }
+
     const r = ray(e.alpha, e.beta);
     const t = e.timeStamp || performance.now();
     const h = euroH.filter(r.h, t);
@@ -873,6 +909,7 @@
 
   // ---------- power ----------
   powerBtn.addEventListener("click", () => {
+    ensureSensors();
     powerOn = !powerOn;
     powerBtn.classList.toggle("off", !powerOn);
     if (!powerOn) {
@@ -979,8 +1016,8 @@
     if (e.target === confirmEl) closeConfirm();
   });
 
-  // primo tocco ovunque: chiedi i permessi sensori (serve un gesto utente)
-  document.addEventListener("pointerdown", ensureSensors, { once: true });
+  // ogni tocco è un'occasione per ottenere i permessi sensori (iOS: serve un gesto)
+  document.addEventListener("pointerdown", ensureSensors);
 
   // ---------- dettatura ----------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
