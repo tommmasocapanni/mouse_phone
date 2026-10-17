@@ -512,6 +512,11 @@
       npFull.style.removeProperty("--np-cover-rgb");
       npFull.style.removeProperty("--np-cover-top");
       npFull.style.removeProperty("--np-cover-bottom");
+      homeMini.classList.remove("cover-themed");
+      homeMini.style.removeProperty("--np-cover-rgb");
+      homeMini.style.removeProperty("--np-cover-solid");
+      homeMini.style.removeProperty("--np-cover-top");
+      homeMini.style.removeProperty("--np-cover-bottom");
       document.documentElement.style.removeProperty("--np-status-color");
       themeColorMeta.forEach((meta, index) => { meta.content = originalThemeColors[index]; });
       return;
@@ -528,10 +533,14 @@
       return Math.round(Math.min(blend, top[index] * 0.82));
     });
     const cssColor = (rgb) => `rgb(${rgb.join(" ")})`;
+    const miniSolid = color.map((channel) => Math.round(channel * 0.42));
     const hexColor = `#${top.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
     npFull.style.setProperty("--np-cover-rgb", color.join(" "));
     npFull.style.setProperty("--np-cover-top", cssColor(top));
     npFull.style.setProperty("--np-cover-bottom", cssColor(bottom));
+    homeMini.style.setProperty("--np-cover-rgb", color.join(" "));
+    homeMini.style.setProperty("--np-cover-solid", cssColor(miniSolid));
+    homeMini.classList.add("cover-themed");
     document.documentElement.style.setProperty("--np-status-color", cssColor(top));
     themeColorMeta.forEach((meta) => { meta.content = hexColor; });
   }

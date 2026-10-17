@@ -1304,6 +1304,7 @@
     if (target.closest(".trackpad")) return true;
     if (target.closest(".sheet")) return true;
     if (target.closest(".cinema")) return true;
+    if (target.closest(".np-full")) return true;
     if (target.closest(".np-coverflow")) return true;
     if (target.closest("input")) return true;
     return sheetOpen;
@@ -1420,6 +1421,8 @@
       if (e.target.closest("input")) return;
       if (e.target.closest(".sheet")) return;
       if (e.target.closest(".cinema")) return;
+      if (e.target.closest(".np-queue-list")) return;
+      if (e.target.closest(".np-full")) return;
       if (e.target.closest(".np-coverflow")) return;
       if (pad.classList.contains("active")) return;
       e.preventDefault();
