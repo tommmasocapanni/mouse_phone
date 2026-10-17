@@ -1307,7 +1307,7 @@ body {
 .home-mini-art.has-art::before { content: ""; }
 .home-mini-text { flex: 1; min-width: 0; overflow: hidden; }
 .home-mini-title {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
   color: var(--ink);
   overflow: hidden;

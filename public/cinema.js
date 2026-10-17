@@ -509,14 +509,20 @@
     }
 
     if (!found) {
-      np.mode = "none";
-      np.url = "";
-      np.ending = false;
-      np.pendingNav = false;
-      closeNpFull();
-      npMini.classList.remove("show");
-      document.getElementById("cinema").classList.remove("has-np");
-      showHomeMini(false);
+      // durante il cambio brano (prev/succ/play) non smontiamo il player: ora
+      // potrebbe essere momentaneamente non rilevato mentre il nuovo video si
+      // carica, e altrimenti l'overlay "sparirebbe e ricomparirebbe"
+      if (Date.now() >= np.navUntil) {
+        np.mode = "none";
+        np.url = "";
+        np.ending = false;
+        np.pendingNav = false;
+        np.navUntil = 0;
+        closeNpFull();
+        npMini.classList.remove("show");
+        document.getElementById("cinema").classList.remove("has-np");
+        showHomeMini(false);
+      }
       return;
     }
 
@@ -554,6 +560,7 @@
       np.url = url;
       np.ending = false;
       np.pendingNav = false;
+      np.navUntil = 0;
     }
     if (d.ended && np.next && !np.ending && !np.pendingNav) {
       np.ending = true;
@@ -698,6 +705,7 @@
   // --- navigazione della coda ---
   async function npQueueNext(silent) {
     if (!ensureOnline()) return;
+    beginNav();
     if (!silent) dot.haptic();
     try {
       const r = await api("/api/queue/next", { method: "POST", body: {} });
@@ -717,6 +725,7 @@
   // di sistema (funziona a prescindere dalla coda, come la modale in home)
   async function npNav(dir) {
     if (!ensureOnline()) return;
+    beginNav();
     dot.haptic();
     try {
       const r = await api("/api/queue/" + dir, { method: "POST", body: {} });
