@@ -1,6 +1,4 @@
 # mouse_phone
-use ur phone like a wii controller
-
 Trackpad + puntatore wireless per il Mac, in Safari su iPhone (UI stile Nothing "dot.").
 
 ## Setup
