@@ -69,6 +69,10 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 > pad e CALIBRA danno il tick al tap; uno switch nascosto fa vibrare a comando su
 > long-press, bordo schermo, media e chip (attivo fino a iOS ~26.4). Da iOS 26.5
 > Apple ha bloccato il trigger via codice: lì il tick arriva solo al tap diretto.
+>
+> **Dark mode**: la web app segue la modalità del dispositivo
+> (`prefers-color-scheme`). In dark il tema usa accenti **rossi** su sfondo
+> nero/grigio.
 
 ## Struttura
 

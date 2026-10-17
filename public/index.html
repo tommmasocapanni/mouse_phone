@@ -7,11 +7,12 @@
   <meta http-equiv="Cache-Control" content="no-store">
   <meta http-equiv="Pragma" content="no-cache">
   <meta name="apple-mobile-web-app-title" content="dot.">
-  <meta name="theme-color" content="#fbfbfa">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e0e0e" media="(prefers-color-scheme: dark)">
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 <main class="phone">
@@ -23,7 +24,7 @@
       <button class="connection" id="connection">
         <span class="led" id="led"></span>
         <span class="conntexts">
-          <strong id="device">MOUSE_PHONE / MAC · v20</strong>
+          <strong id="device">MOUSE_PHONE / MAC · v21</strong>
           <small id="statusText">○ CONNECTING</small>
         </span>
         <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
@@ -132,6 +133,6 @@
   <div class="toast" id="toast">READY</div>
   <div class="diag" id="diag" aria-hidden="true"></div>
 </main>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

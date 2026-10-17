@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v20";
+  const BUILD = "v21";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -592,7 +592,6 @@
 
   // ---------- fluid dot trail (solo rendering) ----------
   const ctx = canvas.getContext("2d", { alpha: false });
-  const BG = "#fbfbfa";
   const GAP = 19;
   const POINT_RADIUS = 1.38;
   const TRAIL_FADE = 850;
@@ -602,6 +601,22 @@
   let trail = [];
   let pulse = [];
   let hadActivity = true;
+
+  // colori del canvas sincronizzati col tema (light/dark)
+  let BG = "#fbfbfa";
+  let DOT_IDLE = "#bcbcbc";
+  let DOT_FADE = "174,174,174";
+  const darkMQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function refreshThemeColors() {
+    const rs = getComputedStyle(document.documentElement);
+    BG = rs.getPropertyValue("--paper").trim() || BG;
+    DOT_IDLE = rs.getPropertyValue("--dot").trim() || DOT_IDLE;
+    DOT_FADE = rs.getPropertyValue("--dot-fade").trim() || DOT_FADE;
+    hadActivity = true;
+  }
+  refreshThemeColors();
+  if (darkMQ && darkMQ.addEventListener) darkMQ.addEventListener("change", refreshThemeColors);
+  else if (darkMQ && darkMQ.addListener) darkMQ.addListener(refreshThemeColors);
 
   function resizeCanvas() {
     const rect = pad.getBoundingClientRect();
@@ -696,11 +711,11 @@
           ctx.fillStyle = `hsl(${hue.toFixed(0)} 83% ${lum}% / ${Math.min(0.96, 0.15 + influence * 0.85)})`;
           ctx.fill();
           if (influence < 0.65) {
-            ctx.fillStyle = `rgba(174,174,174,${(1 - influence) * 0.52})`;
+            ctx.fillStyle = `rgba(${DOT_FADE},${(1 - influence) * 0.52})`;
             ctx.fill();
           }
         } else {
-          ctx.fillStyle = "#bcbcbc";
+          ctx.fillStyle = DOT_IDLE;
           ctx.fill();
         }
       }
@@ -1092,7 +1107,7 @@
   function paintSlider() {
     value.textContent = `${settings.sens}%`;
     range.value = settings.sens;
-    range.style.background = `linear-gradient(to right,#222 0%,#222 ${settings.sens}%,#dedede ${settings.sens}%,#dedede 100%)`;
+    range.style.background = `linear-gradient(to right,var(--accent) 0%,var(--accent) ${settings.sens}%,var(--line) ${settings.sens}%,var(--line) 100%)`;
   }
 
   range.addEventListener("input", () => {
