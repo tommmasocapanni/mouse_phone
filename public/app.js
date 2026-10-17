@@ -922,9 +922,6 @@
           if (dy < 0 && settings.missionControl && Date.now() - lastMissionControlAt >= MISSION_CONTROL_DEBOUNCE_MS) {
             lastMissionControlAt = Date.now();
             send({ type: "gesture", action: "missionControl" });
-            pad.classList.remove("mission-control-flash");
-            requestAnimationFrame(() => pad.classList.add("mission-control-flash"));
-            setTimeout(() => pad.classList.remove("mission-control-flash"), 500);
             gestureHapticTick();
             toastMsg("MISSION CONTROL");
           }

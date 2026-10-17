@@ -1004,6 +1004,41 @@ function switchSpace(dir) {
   );
 }
 
+function missionControl() {
+  const runKey = (keyCode, modifiers, callback) => {
+    const modifierClause = modifiers ? ` using ${modifiers}` : "";
+    execFile(
+      "/usr/bin/osascript",
+      ["-e", `tell application "System Events" to key code ${keyCode}${modifierClause}`],
+      callback
+    );
+  };
+  const reportFallback = (method) => {
+    console.log(`Mission Control: ${method}`);
+    broadcast({ type: "gestureDiagnostic", action: "missionControl", method });
+  };
+
+  runKey(101, "", (f9Error) => {
+    if (!f9Error) return;
+    console.error(`Mission Control F9 error: ${f9Error.message}`);
+    runKey(126, "control down", (controlUpError) => {
+      if (!controlUpError) {
+        reportFallback("control-up");
+        return;
+      }
+      console.error(`Mission Control Ctrl+Up error: ${controlUpError.message}`);
+      execFile("/usr/bin/open", ["-a", "Mission Control"], (openError) => {
+        if (openError) {
+          console.error(`Mission Control open-app error: ${openError.message}`);
+          reportFallback("failed");
+        } else {
+          reportFallback("open-app");
+        }
+      });
+    });
+  });
+}
+
 function handleMessage(msg) {
   if (!msg || typeof msg !== "object") return;
   switch (msg.type) {
@@ -1038,7 +1073,7 @@ function handleMessage(msg) {
       break;
     case "gesture":
       if (msg.action === "missionControl") {
-        sendHelper({ cmd: "gesture", action: "missionControl" });
+        missionControl();
       }
       break;
     case "media":
