@@ -482,6 +482,11 @@ body {
 .cs-diag.ok { color: #1a8a4a; }
 .cs-diag.err { color: #c0392b; }
 
+/* --- salta intro/ads --- */
+.np-actions { display: flex; gap: 8px; margin-top: 12px; }
+.np-actions .cs-chip { flex: 1; text-align: center; padding: 11px 0; }
+.np-actions .cs-chip.disabled { opacity: .4; pointer-events: none; }
+
 /* --- griglia launcher (2 colonne, tile ≥ 56px) --- */
 .tile-grid {
   display: grid;

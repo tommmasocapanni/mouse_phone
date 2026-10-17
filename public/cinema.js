@@ -182,8 +182,9 @@
   // ---------- now playing (controllo player via iniezione JS) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0 };
-  let npBarEl, npPlayBtn, npTitleEl, npCurEl, npDurEl, npFillEl, npTrackEl;
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false };
+  let npBarEl, npPlayBtn, npTitleEl, npCurEl, npDurEl, npFillEl, npTrackEl, npSkipBtn, npAutoBtn;
+  try { np.auto = localStorage.getItem("dot_autoskip") === "1"; } catch (_) {}
 
   function fmtTime(s) {
     s = Math.max(0, Math.floor(Number(s) || 0));
@@ -213,7 +214,11 @@
     npFillEl = h("div", { class: "np-fill" });
     npTrackEl = h("div", { class: "np-track", onclick: onNpSeek }, npFillEl);
 
-    npBarEl = h("div", { class: "np-bar idle" }, h("div", { class: "np-row" }, npPlayBtn, info), npTrackEl);
+    npSkipBtn = h("button", { class: "cs-chip np-skip", type: "button", text: "SALTA", onclick: npSkip });
+    npAutoBtn = h("button", { class: "cs-chip np-auto" + (np.auto ? " active" : ""), type: "button", text: "AUTO-SKIP", onclick: npToggleAuto });
+    const actions = h("div", { class: "np-actions" }, npSkipBtn, npAutoBtn);
+
+    npBarEl = h("div", { class: "np-bar idle" }, h("div", { class: "np-row" }, npPlayBtn, info), npTrackEl, actions);
     return h("section", { class: "cine-sec" }, head, npBarEl);
   }
 
@@ -231,6 +236,7 @@
       npDurEl.textContent = "0:00";
       npFillEl.style.width = "0%";
       npBarEl.classList.add("idle");
+      if (npSkipBtn) npSkipBtn.classList.add("disabled");
       return;
     }
     np.found = true;
@@ -243,6 +249,7 @@
     npDurEl.textContent = fmtTime(np.duration);
     npFillEl.style.width = (np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0) + "%";
     npBarEl.classList.remove("idle");
+    if (npSkipBtn) npSkipBtn.classList.remove("disabled");
   }
 
   async function pollNp() {
@@ -250,6 +257,7 @@
     np.busy = true;
     try { applyNp(await api("/api/nowplaying", { method: "GET" })); } catch (_) {}
     np.busy = false;
+    if (np.auto && np.found) api("/api/skip", { method: "POST", body: {} }).catch(() => {});
   }
 
   function startNp() {
@@ -283,6 +291,26 @@
     npCurEl.textContent = fmtTime(sec);
     dot.haptic();
     api("/api/seek", { method: "POST", body: { seconds: sec } }).catch(() => {});
+  }
+
+  async function npSkip() {
+    if (!ensureOnline()) return;
+    dot.haptic();
+    try {
+      const r = await api("/api/skip", { method: "POST", body: {} });
+      if (r && r.clicked) dot.toast("SALTATO · " + String(r.clicked).toUpperCase().slice(0, 20));
+      else if (r && r.ad) dot.toast("ANNUNCIO · MANDATO AVANTI");
+      else dot.toast("NIENTE DA SALTARE");
+    } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
+  }
+
+  function npToggleAuto() {
+    dot.haptic();
+    np.auto = !np.auto;
+    if (npAutoBtn) npAutoBtn.classList.toggle("active", np.auto);
+    try { localStorage.setItem("dot_autoskip", np.auto ? "1" : "0"); } catch (_) {}
+    dot.toast(np.auto ? "AUTO-SKIP ON" : "AUTO-SKIP OFF");
+    if (np.auto) pollNp();
   }
 
   document.addEventListener("dot:cinema", (e) => {
@@ -543,6 +571,18 @@
       } catch (e) { diagOut.textContent = "ERRORE · " + e.message; diagOut.classList.add("err"); }
     }});
 
+    const skipOut = h("div", { class: "cs-diag" });
+    const skipBtn = h("button", { class: "cs-chip", text: "TESTA SALTA ANNUNCIO", onclick: async () => {
+      skipOut.textContent = "…";
+      skipOut.className = "cs-diag";
+      try {
+        const r = await api("/api/skip", { method: "POST", body: {} });
+        if (!r.ok) { skipOut.textContent = "ERRORE · " + (r.error || r.reason); skipOut.classList.add("err"); return; }
+        skipOut.textContent = "CLICKED: " + (r.clicked || "null") + " · ANNUNCIO: " + (r.ad ? "SÌ" : "no") + (r.error ? " · " + r.error : "");
+        skipOut.classList.add(r.clicked || r.ad ? "ok" : "");
+      } catch (e) { skipOut.textContent = "ERRORE · " + e.message; skipOut.classList.add("err"); }
+    }});
+
     openSheet(h("div", {},
       sheetHead("IMPOSTAZIONI"),
       h("div", { class: "cs-label", text: "BROWSER" }), browserRow,
@@ -555,7 +595,8 @@
           dot.toast("SALVATO");
         } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
       }}),
-      h("div", { class: "cs-label", text: "DIAGNOSI PLAYER" }), diagBtn, diagOut
+      h("div", { class: "cs-label", text: "DIAGNOSI PLAYER" }), diagBtn, diagOut,
+      h("div", { class: "cs-label", text: "DIAGNOSI SALTA ANNUNCIO" }), skipBtn, skipOut
     ));
   }
 

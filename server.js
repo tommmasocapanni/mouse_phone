@@ -382,6 +382,25 @@ const JS_NOWPLAYING =
   "return JSON.stringify({found:true,title:t,current:cur,duration:dur,paused:!!v.paused,rate:v.playbackRate||1,url:String(location.href||'').slice(0,200)});" +
   "}catch(e){return JSON.stringify({found:false,error:String(e)});}})()";
 
+// salta intro/ads: clicca i pulsanti noti (click realistico), poi euristica testuale,
+// e COMUNQUE manda avanti l'ad se è in corso (YouTube blocca i click sintetici)
+const JS_SKIP = [
+  "(function(){try{",
+  "function vis(el){if(!el)return false;var r=el.getBoundingClientRect();var s=getComputedStyle(el);return r.width>1&&r.height>1&&s.visibility!=='hidden'&&s.display!=='none'&&s.opacity!=='0';}",
+  "function realClick(el){try{var r=el.getBoundingClientRect();var o={bubbles:true,cancelable:true,view:window,clientX:r.left+r.width/2,clientY:r.top+r.height/2};el.dispatchEvent(new MouseEvent('mousedown',o));el.dispatchEvent(new MouseEvent('mouseup',o));el.dispatchEvent(new MouseEvent('click',o));el.click();return true;}catch(e){try{el.click();return true;}catch(_){return false;}}}",
+  "var sels=['.ytp-ad-skip-button-modern','.ytp-skip-ad-button','.ytp-ad-skip-button','.ytp-skip-ad-button-modern','.ytp-ad-skip-button-container button','.videoAdUiSkipButton','.ytp-button[aria-label*=\"Skip\"]','.ytp-ad-button[aria-label*=\"Skip\"]','button[aria-label^=\"Skip ad\"]','button[aria-label*=\"Salta\"]','[data-uia=\"player-skip-intro\"]','[data-uia=\"player-skip-recap\"]','.skip-button','.skip-intro','button[class*=\"skip\"]','[class*=\"skip\"][class*=\"intro\"]','.ytp-ad-overlay-close-button'];",
+  "var clicked=null;",
+  "for(var i=0;i<sels.length&&!clicked;i++){var els=document.querySelectorAll(sels[i]);for(var j=0;j<els.length;j++){if(vis(els[j])){realClick(els[j]);clicked=sels[i];break;}}}",
+  "if(!clicked){var btns=document.querySelectorAll('button,[role=button]');for(var k=0;k<btns.length;k++){var t=(btns[k].textContent||'').trim().toLowerCase();if(t.length<=24&&/^(skip|salta|ignora|omite|pular|passer)/.test(t)&&!/navigation|content|menu/.test(t)&&vis(btns[k])){realClick(btns[k]);clicked='text:'+t.slice(0,24);break;}}}",
+  "var host=document.querySelector('.html5-video-player,#movie_player');",
+  "var inAd=(host&&host.classList&&(host.classList.contains('ad-showing')||host.classList.contains('ad-interrupting')))||!!document.querySelector('.ytp-ad-player-overlay,.ytp-ad-preview-container,.ytp-ad-simple-ad-badge');",
+  "var v=document.querySelector('video');",
+  "if(inAd&&v){try{v.playbackRate=16;if(isFinite(v.duration)&&v.duration>0){v.currentTime=Math.max(v.currentTime,v.duration-0.1);}window.__dotAdFF=true;setTimeout(function(){try{var vv=document.querySelector('video');if(vv)vv.playbackRate=1;}catch(e){}},6000);if(!clicked)clicked='ad-ff';}catch(e){}}",
+  "else if(v&&window.__dotAdFF){try{v.playbackRate=1;}catch(e){}window.__dotAdFF=false;}",
+  "return JSON.stringify({clicked:clicked,ad:!!inAd});",
+  "}catch(e){return JSON.stringify({clicked:null,error:String(e)});}})()",
+].join("");
+
 function jsPlayer(action, seconds) {
   const find = "var v=" + JS_MEDIA + ";if(!v)return '0';";
   if (action === "seek")
@@ -646,6 +665,15 @@ async function handleApi(req, res, url) {
       const r = await runBrowserJS(jsPlayer("seek", sec));
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
       return jsonResponse(res, 200, { ok: true, hit: r.result === "1" });
+    }
+    if (p === "/api/skip" && method === "POST") {
+      const r = await runBrowserJS(JS_SKIP);
+      if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
+      let out = { clicked: null, ad: false };
+      try {
+        out = JSON.parse(r.result);
+      } catch (_) {}
+      return jsonResponse(res, 200, { ok: true, clicked: out.clicked || null, ad: !!out.ad, error: out.error || null });
     }
     if (p === "/api/files" && method === "GET") {
       return listFiles(url, res);
