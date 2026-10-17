@@ -102,6 +102,22 @@ if (!Array.isArray(queue)) {
   writeJson("queue.json", queue);
 }
 
+// stato di navigazione del player: traccia cosa è in riproduzione e la cronologia,
+// così i comandi precedente/successivo hanno un senso (non persistito: al riavvio
+// del server si riparte da una coda pulita di riferimenti).
+let playNav = { current: null, history: [] };
+
+// apre un link della coda nel browser configurato
+async function openQueueItem(item) {
+  await helperCall({
+    cmd: "openurl",
+    url: item.url,
+    browser: settings.browser,
+    displayIndex: settings.displayIndex,
+    fullscreen: true,
+  });
+}
+
 // browser rilevati sul Mac. "default" apre con il browser di sistema di macOS.
 function installedBrowsers() {
   const candidates = [
@@ -382,7 +398,7 @@ const JS_NOWPLAYING =
   "var art='';try{art=v.poster||'';}catch(e){}" +
   "if(!art){var mm=document.querySelector('meta[property=\"og:image\"],meta[name=\"og:image\"]');if(mm&&mm.content)art=mm.content;}" +
   "if(art){try{art=new URL(art,location.href).href;}catch(e){art='';}}" +
-  "return JSON.stringify({found:true,title:t,current:cur,duration:dur,paused:!!v.paused,rate:v.playbackRate||1,url:String(location.href||'').slice(0,200),art:String(art||''),site:String(location.hostname||'')});" +
+  "return JSON.stringify({found:true,title:t,current:cur,duration:dur,paused:!!v.paused,ended:!!v.ended,rate:v.playbackRate||1,url:String(location.href||'').slice(0,200),art:String(art||''),site:String(location.hostname||'')});" +
   "}catch(e){return JSON.stringify({found:false,error:String(e)});}})()";
 
 // salta intro/ads: clicca i pulsanti noti (click realistico), poi euristica testuale,
@@ -635,7 +651,71 @@ async function handleApi(req, res, url) {
         displayIndex: settings.displayIndex,
         fullscreen: true,
       });
+      if (playNav.current) playNav.history.push(playNav.current);
+      playNav.current = { id: null, url: clean, title: null };
       return jsonResponse(res, 200, { ok: true, mode: "open" });
+    }
+    if (p === "/api/queue" && method === "GET") {
+      return jsonResponse(res, 200, { queue });
+    }
+    if (p === "/api/queue/remove" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const id = String(b.id || "");
+      const before = queue.length;
+      queue = queue.filter((q) => q.id !== id);
+      if (queue.length === before) return jsonResponse(res, 404, { error: "elemento non trovato" });
+      writeJson("queue.json", queue);
+      broadcast({ type: "queue", queue });
+      return jsonResponse(res, 200, { ok: true, queue });
+    }
+    if (p === "/api/queue/move" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const id = String(b.id || "");
+      const dir = b.dir === "up" ? -1 : b.dir === "down" ? 1 : 0;
+      const i = queue.findIndex((q) => q.id === id);
+      if (i < 0) return jsonResponse(res, 404, { error: "elemento non trovato" });
+      const j = i + dir;
+      if (dir !== 0 && j >= 0 && j < queue.length) {
+        const tmp = queue[i];
+        queue[i] = queue[j];
+        queue[j] = tmp;
+        writeJson("queue.json", queue);
+        broadcast({ type: "queue", queue });
+      }
+      return jsonResponse(res, 200, { ok: true, queue });
+    }
+    if (p === "/api/queue/next" && method === "POST") {
+      const item = queue.shift();
+      if (!item) return jsonResponse(res, 404, { error: "coda vuota" });
+      if (playNav.current) playNav.history.push(playNav.current);
+      playNav.current = item;
+      writeJson("queue.json", queue);
+      broadcast({ type: "queue", queue });
+      await openQueueItem(item);
+      return jsonResponse(res, 200, { ok: true, opened: item, queue });
+    }
+    if (p === "/api/queue/prev" && method === "POST") {
+      const item = playNav.history.pop();
+      if (!item) return jsonResponse(res, 404, { error: "nessun precedente" });
+      if (playNav.current) queue.unshift(playNav.current);
+      playNav.current = item;
+      writeJson("queue.json", queue);
+      broadcast({ type: "queue", queue });
+      await openQueueItem(item);
+      return jsonResponse(res, 200, { ok: true, opened: item, queue });
+    }
+    if (p === "/api/queue/play" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const id = String(b.id || "");
+      const i = queue.findIndex((q) => q.id === id);
+      if (i < 0) return jsonResponse(res, 404, { error: "elemento non trovato" });
+      const item = queue.splice(i, 1)[0];
+      if (playNav.current) playNav.history.push(playNav.current);
+      playNav.current = item;
+      writeJson("queue.json", queue);
+      broadcast({ type: "queue", queue });
+      await openQueueItem(item);
+      return jsonResponse(res, 200, { ok: true, opened: item, queue });
     }
     if (p === "/api/nowplaying" && method === "GET") {
       const r = await runBrowserJS(JS_NOWPLAYING);

@@ -166,23 +166,26 @@
       },
     });
 
-    const launch = async () => {
+    const send = async (mode) => {
       if (!ensureOnline()) return;
       const url = input.value.trim();
       if (!/^https?:\/\//i.test(url)) { dot.toast("URL NON VALIDO (http/https)"); return; }
       dot.haptic();
       try {
-        await api("/api/cast", { method: "POST", body: { url, mode: "open" } });
-        dot.toast("LANCIATO SUL MAC");
+        await api("/api/cast", { method: "POST", body: { url, mode } });
+        dot.toast(mode === "queue" ? "AGGIUNTO ALLA CODA" : "LANCIATO SUL MAC");
         closeCastModal();
       } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
     };
 
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); launch(); } });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send("open"); } });
 
     card.append(
       h("div", { class: "cast-row" }, input, pasteBtn),
-      h("button", { class: "cs-primary cast-launch", type: "button", text: "LANCIA", onclick: launch })
+      h("div", { class: "cast-actions" },
+        h("button", { class: "cs-primary cast-launch", type: "button", text: "LANCIA", onclick: () => send("open") }),
+        h("button", { class: "cs-primary cast-queue", type: "button", text: "+ CODA", onclick: () => send("queue") })
+      )
     );
 
     castModalEl.classList.add("open");
@@ -198,8 +201,9 @@
   // ---------- now playing (mini-player + schermata a tutto schermo) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, mode: "none" };
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false };
   try { np.auto = localStorage.getItem("dot_autoskip") === "1"; } catch (_) {}
+  try { np.next = localStorage.getItem("dot_autoplay") === "1"; } catch (_) {}
 
   const npMini = document.getElementById("npMini");
   const npMiniArt = document.getElementById("npMiniArt");
@@ -224,9 +228,12 @@
   const npFullCur = document.getElementById("npFullCur");
   const npFullDur = document.getElementById("npFullDur");
   const npFullPlay = document.getElementById("npFullPlay");
+  const npFullPrev = document.getElementById("npFullPrev");
+  const npFullNext = document.getElementById("npFullNext");
   const npFullSkip = document.getElementById("npFullSkip");
   const npFullAuto = document.getElementById("npFullAuto");
-  if (npFullAuto) npFullAuto.classList.toggle("active", np.auto);
+  if (npFullSkip) npFullSkip.classList.toggle("active", np.auto);
+  if (npFullAuto) npFullAuto.classList.toggle("active", np.next);
 
   function fmtTime(s) {
     s = Math.max(0, Math.floor(Number(s) || 0));
@@ -260,6 +267,10 @@
     npFull.classList.remove("show");
     npFull.setAttribute("aria-hidden", "true");
     closeVol();
+    npFull.classList.remove("queue");
+    npQueue.hidden = true;
+    npFullQueue.classList.remove("active");
+    hideNqMenu();
   }
 
   // ---------- volume di sistema (slider verticale) ----------
@@ -320,6 +331,105 @@
   npVolTrack.addEventListener("pointercancel", () => { volDragging = false; });
   npVol.addEventListener("pointerdown", (e) => e.stopPropagation());
 
+  // ---------- coda (queue) ----------
+  const npFullQueue = document.getElementById("npFullQueue");
+  const npQueue = document.getElementById("npQueue");
+  const npQueueList = document.getElementById("npQueueList");
+  const nqMenu = document.getElementById("nqMenu");
+  let queueItems = [];
+
+  function hostOf(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
+  }
+
+  function setFavicon(el, url) {
+    const host = hostOf(url);
+    if (host) {
+      el.style.backgroundImage = "url(" + JSON.stringify("https://www.google.com/s2/favicons?domain=" + encodeURIComponent(host) + "&sz=128") + ")";
+      el.classList.add("has-art");
+    } else {
+      el.style.backgroundImage = "";
+      el.classList.remove("has-art");
+    }
+  }
+
+  function renderQueue() {
+    npQueueList.textContent = "";
+    if (!queueItems.length) {
+      npQueueList.append(h("div", { class: "nq-empty", text: "CODA VUOTA · AGGIUNGI LINK CON ⇱" }));
+      return;
+    }
+    for (const it of queueItems) {
+      const art = h("div", { class: "nq-art" });
+      setFavicon(art, it.url);
+      const host = hostOf(it.url);
+      const title = it.title || host || it.url;
+      const sub = it.title ? host : "IN CODA";
+      const more = h("button", { class: "nq-more", type: "button", text: "⋯", "aria-label": "Opzioni" });
+      more.addEventListener("click", (e) => { e.stopPropagation(); openNqMenu(more, it.id); });
+      const item = h("div", { class: "nq-item" },
+        art,
+        h("div", { class: "nq-text" }, h("div", { class: "nq-title", text: title }), h("div", { class: "nq-sub", text: sub })),
+        more
+      );
+      item.addEventListener("click", () => playQueueItem(it.id));
+      npQueueList.append(item);
+    }
+  }
+
+  async function loadQueue() {
+    try {
+      const r = await api("/api/queue", { method: "GET" });
+      queueItems = (r && r.queue) || [];
+      renderQueue();
+    } catch (_) {}
+  }
+
+  function hideNqMenu() { nqMenu.hidden = true; nqMenu.dataset.id = ""; }
+
+  function openNqMenu(btn, id) {
+    dot.haptic();
+    nqMenu.dataset.id = id;
+    nqMenu.hidden = false;
+    const b = btn.getBoundingClientRect();
+    const f = npFull.getBoundingClientRect();
+    const mw = nqMenu.offsetWidth;
+    const mh = nqMenu.offsetHeight;
+    let top = b.bottom - f.top + 4;
+    let right = f.right - b.right;
+    if (top + mh > f.height - 8) top = Math.max(8, b.top - f.top - mh - 4);
+    if (right + mw > f.width - 8) right = 8;
+    nqMenu.style.top = top + "px";
+    nqMenu.style.right = right + "px";
+  }
+
+  function toggleQueue() {
+    dot.haptic();
+    const on = !npFull.classList.contains("queue");
+    npFull.classList.toggle("queue", on);
+    npQueue.hidden = !on;
+    npFullQueue.classList.toggle("active", on);
+    if (on) { closeVol(); loadQueue(); }
+    else hideNqMenu();
+  }
+
+  npFullQueue.addEventListener("click", toggleQueue);
+  npQueueList.addEventListener("scroll", hideNqMenu);
+  nqMenu.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".nq-menu-item");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const id = nqMenu.dataset.id;
+    hideNqMenu();
+    if (!id) return;
+    dot.haptic();
+    try {
+      if (act === "remove") await api("/api/queue/remove", { method: "POST", body: { id } });
+      else await api("/api/queue/move", { method: "POST", body: { id, dir: act } });
+      await loadQueue();
+    } catch (err) { dot.toast("ERRORE: " + err.message.toUpperCase()); }
+  });
+
   function applyNp(d) {
     const found = !!(d && d.found);
     np.found = found;
@@ -339,6 +449,9 @@
 
     if (!found) {
       np.mode = "none";
+      np.url = "";
+      np.ending = false;
+      np.pendingNav = false;
       closeNpFull();
       npMini.classList.remove("show");
       document.getElementById("cinema").classList.remove("has-np");
@@ -365,6 +478,18 @@
     npFullDur.textContent = fmtTime(np.duration);
     const pct = np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0;
     npFullFill.style.width = pct + "%";
+
+    // autoplay: quando il video finisce passa al prossimo della coda
+    const url = String(d.url || "");
+    if (url !== np.url) {
+      np.url = url;
+      np.ending = false;
+      np.pendingNav = false;
+    }
+    if (d.ended && np.next && !np.ending && !np.pendingNav) {
+      np.ending = true;
+      npQueueNext(true);
+    }
   }
 
   async function pollNp() {
@@ -468,14 +593,82 @@
     } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
   }
 
-  function npToggleAuto() {
+  // --- navigazione della coda ---
+  async function npQueueNext(silent) {
+    if (!ensureOnline()) return;
+    if (!silent) dot.haptic();
+    try {
+      const r = await api("/api/queue/next", { method: "POST", body: {} });
+      if (r && r.opened) {
+        np.url = r.opened.url || "";
+        np.ending = false;
+        np.pendingNav = true;
+        if (!silent) dot.toast("PROSSIMO · " + hostOf(r.opened.url).toUpperCase());
+        setTimeout(pollNp, 600);
+      }
+    } catch (e) {
+      if (!silent) dot.toast("NIENTE IN CODA");
+    }
+  }
+
+  async function npQueuePrev() {
+    if (!ensureOnline()) return;
+    dot.haptic();
+    try {
+      const r = await api("/api/queue/prev", { method: "POST", body: {} });
+      if (r && r.opened) {
+        np.url = r.opened.url || "";
+        np.ending = false;
+        np.pendingNav = true;
+        dot.toast("PRECEDENTE · " + hostOf(r.opened.url).toUpperCase());
+        setTimeout(pollNp, 600);
+      }
+    } catch (e) { dot.toast("NESSUN PRECEDENTE"); }
+  }
+
+  async function playQueueItem(id) {
+    if (!ensureOnline()) return;
+    dot.haptic();
+    try {
+      const r = await api("/api/queue/play", { method: "POST", body: { id } });
+      if (r && r.opened) {
+        np.url = r.opened.url || "";
+        np.ending = false;
+        np.pendingNav = true;
+        setTimeout(pollNp, 600);
+      }
+    } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
+  }
+
+  // --- toggle stile loop/shuffle ---
+  let skipLongFired = false;
+  let skipLongTimer = null;
+
+  function npToggleSkip() {
+    if (skipLongFired) { skipLongFired = false; return; } // era una pressione lunga (salta ora): niente toggle
     dot.haptic();
     np.auto = !np.auto;
-    if (npFullAuto) npFullAuto.classList.toggle("active", np.auto);
+    if (npFullSkip) npFullSkip.classList.toggle("active", np.auto);
     try { localStorage.setItem("dot_autoskip", np.auto ? "1" : "0"); } catch (_) {}
-    dot.toast(np.auto ? "AUTO-SKIP ON" : "AUTO-SKIP OFF");
+    dot.toast(np.auto ? "SALTA ANNUNCI ON" : "SALTA ANNUNCI OFF");
     if (np.auto) pollNp();
   }
+
+  function npToggleAuto() {
+    dot.haptic();
+    np.next = !np.next;
+    if (npFullAuto) npFullAuto.classList.toggle("active", np.next);
+    try { localStorage.setItem("dot_autoplay", np.next ? "1" : "0"); } catch (_) {}
+    dot.toast(np.next ? "AUTOPLAY ON" : "AUTOPLAY OFF");
+  }
+
+  // pressione lunga sul toggle salta → salta subito l'annuncio
+  function skipPressStart() {
+    skipLongFired = false;
+    clearTimeout(skipLongTimer);
+    skipLongTimer = setTimeout(() => { skipLongFired = true; npSkip(); }, 480);
+  }
+  function skipPressEnd() { clearTimeout(skipLongTimer); }
 
   npMini.addEventListener("click", (e) => {
     if (e.target.closest("#npMiniPlay")) return;
@@ -488,10 +681,20 @@
   npFullAudio.addEventListener("click", toggleVol);
   npBack.addEventListener("click", () => npSeekBy(-5));
   npFwd.addEventListener("click", () => npSeekBy(5));
-  npFullSkip.addEventListener("click", npSkip);
+  npFullSkip.addEventListener("click", npToggleSkip);
   npFullAuto.addEventListener("click", npToggleAuto);
+  npFullPrev.addEventListener("click", npQueuePrev);
+  npFullNext.addEventListener("click", () => npQueueNext(false));
+  npFullSkip.addEventListener("pointerdown", skipPressStart);
+  npFullSkip.addEventListener("pointerup", skipPressEnd);
+  npFullSkip.addEventListener("pointerleave", skipPressEnd);
+  npFullSkip.addEventListener("pointercancel", skipPressEnd);
   npFullTrack.addEventListener("click", onNpSeek);
-  npFull.addEventListener("click", (e) => { if (e.target === npFull) { closeNpFull(); return; } if (!e.target.closest("#npVol") && !e.target.closest("#npFullAudio")) closeVol(); });
+  npFull.addEventListener("click", (e) => {
+    if (e.target === npFull) { closeNpFull(); return; }
+    if (!e.target.closest(".nq-menu") && !e.target.closest(".nq-more")) hideNqMenu();
+    if (!e.target.closest("#npVol") && !e.target.closest("#npFullAudio")) closeVol();
+  });
 
   document.addEventListener("dot:cinema", (e) => {
     if (e.detail && e.detail.open) startNp();
@@ -824,6 +1027,9 @@
       state.target = msg.settings.displayIndex;
     } else if (msg.type === "displays" && Array.isArray(msg.displays)) {
       state.displays = msg.displays;
+    } else if (msg.type === "queue" && Array.isArray(msg.queue)) {
+      queueItems = msg.queue;
+      if (!npQueue.hidden) renderQueue();
     }
   });
 

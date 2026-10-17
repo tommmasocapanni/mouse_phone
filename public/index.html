@@ -12,7 +12,7 @@
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=31">
+  <link rel="stylesheet" href="style.css?v=33">
 </head>
 <body>
 <main class="phone">
@@ -24,7 +24,7 @@
       <button class="connection" id="connection">
         <span class="led" id="led"></span>
         <span class="conntexts">
-          <strong id="device">MOUSE_PHONE / MAC · v31</strong>
+          <strong id="device">MOUSE_PHONE / MAC · v33</strong>
           <small id="statusText">○ CONNECTING</small>
         </span>
         <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
@@ -104,16 +104,21 @@
         <button class="np-full-down" id="npFullDown" aria-label="Chiudi player">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
         </button>
-        <div class="np-vol-anchor">
-          <button class="np-full-audio" id="npFullAudio" aria-label="Volume">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+        <div class="np-full-actions">
+          <button class="np-full-queue" id="npFullQueue" aria-label="Coda">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 12h11M4 18h7"/><path d="M18 11l4 2.5-4 2.5z"/></svg>
           </button>
-          <div class="np-vol" id="npVol" aria-hidden="true">
-            <div class="np-vol-track" id="npVolTrack">
-              <div class="np-vol-fill" id="npVolFill"></div>
-              <div class="np-vol-thumb" id="npVolThumb"></div>
+          <div class="np-vol-anchor">
+            <button class="np-full-audio" id="npFullAudio" aria-label="Volume">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+            </button>
+            <div class="np-vol" id="npVol" aria-hidden="true">
+              <div class="np-vol-track" id="npVolTrack">
+                <div class="np-vol-fill" id="npVolFill"></div>
+                <div class="np-vol-thumb" id="npVolThumb"></div>
+              </div>
+              <div class="np-vol-val" id="npVolVal">—</div>
             </div>
-            <div class="np-vol-val" id="npVolVal">—</div>
           </div>
         </div>
       </div>
@@ -121,6 +126,10 @@
       <div class="np-full-info">
         <div class="np-full-title" id="npFullTitle">—</div>
         <div class="np-full-site" id="npFullSite"></div>
+      </div>
+      <div class="np-queue" id="npQueue" hidden>
+        <div class="np-queue-head">CONTINUE PLAYING</div>
+        <div class="np-queue-list" id="npQueueList"></div>
       </div>
       <div class="np-full-spacer"></div>
       <div class="np-full-seek">
@@ -134,9 +143,26 @@
       <div class="np-full-track" id="npFullTrack"><div class="np-full-fill" id="npFullFill"></div></div>
       <div class="np-full-times"><span id="npFullCur">0:00</span><span id="npFullDur">0:00</span></div>
       <div class="np-full-controls">
-        <button class="np-ctl" id="npFullSkip" type="button">SALTA</button>
+        <button class="np-ctl np-ctl-icon" id="npFullPrev" type="button" aria-label="Precedente">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5v14"/><path d="M20 5v14l-12-7z" fill="currentColor"/></svg>
+        </button>
         <button class="np-ctl np-ctl-play" id="npFullPlay" aria-label="Play / Pausa"></button>
-        <button class="np-ctl" id="npFullAuto" type="button">AUTO</button>
+        <button class="np-ctl np-ctl-icon" id="npFullNext" type="button" aria-label="Successivo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5v14"/><path d="M4 5v14l12-7z" fill="currentColor"/></svg>
+        </button>
+      </div>
+      <div class="np-full-toggles">
+        <button class="np-toggle" id="npFullSkip" type="button" aria-label="Salta annunci in automatico">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M4 5v14l8-7z"/><path d="M13 5v14l8-7z"/></svg>
+        </button>
+        <button class="np-toggle" id="npFullAuto" type="button" aria-label="Riproduzione automatica della coda">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        </button>
+      </div>
+      <div class="nq-menu" id="nqMenu" hidden>
+        <button class="nq-menu-item" data-act="up" type="button">SPOSTA SU</button>
+        <button class="nq-menu-item" data-act="down" type="button">SPOSTA GIÙ</button>
+        <button class="nq-menu-item danger" data-act="remove" type="button">ELIMINA</button>
       </div>
     </div>
 
@@ -219,7 +245,7 @@
   <div class="diag" id="diag" aria-hidden="true"></div>
 </main>
 <script>window.__DOT_TOKEN__ = "__PAIR_TOKEN__";</script>
-<script src="app.js?v=31"></script>
-<script src="cinema.js?v=31"></script>
+<script src="app.js?v=33"></script>
+<script src="cinema.js?v=33"></script>
 </body>
 </html>
