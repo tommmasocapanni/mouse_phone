@@ -11,6 +11,15 @@ func isTrusted() -> Bool {
     return AXIsProcessTrustedWithOptions(opts)
 }
 
+// stampa una riga JSON su stdout (protocollo verso il server Node)
+func emit(_ obj: [String: Any]) {
+    if let data = try? JSONSerialization.data(withJSONObject: obj),
+       let line = String(data: data, encoding: .utf8) {
+        print(line)
+        fflush(stdout)
+    }
+}
+
 func move(nx: Double, ny: Double) {
     let point = CGPoint(x: displayBounds.origin.x + max(0, min(1, nx)) * displayBounds.width,
                         y: displayBounds.origin.y + max(0, min(1, ny)) * displayBounds.height)
@@ -53,7 +62,7 @@ func typeText(_ text: String) {
 let keyCodes: [String: CGKeyCode] = [
     "return": 36, "tab": 48, "space": 49, "escape": 53, "delete": 117,
     "left": 123, "right": 124, "down": 125, "up": 126,
-    "w": 13, "q": 12, "t": 17, "r": 15, "n": 45,
+    "w": 13, "q": 12, "t": 17, "r": 15, "n": 45, "f": 3,
 ]
 
 func pressKey(name: String, command: Bool, control: Bool = false) {
@@ -88,8 +97,184 @@ func mediaKey(_ name: String) {
     }
 }
 
+// MARK: - Cursore (mostra/nascondi) per la modalità proiettore
+
+func setCursorVisible(_ visible: Bool) {
+    if visible {
+        CGDisplayShowCursor(CGMainDisplayID())
+    } else {
+        CGDisplayHideCursor(CGMainDisplayID())
+    }
+}
+
+// MARK: - Display (multi-monitor)
+
+// Elenco schermi. NSScreen usa coordinate Cocoa con origine in basso a sinistra,
+// mentre AX (per spostare le finestre) usa l'origine in alto a sinistra sul
+// display principale: qui convertiamo sull'altezza del main screen.
+func screenList() -> [[String: Any]] {
+    let screens = NSScreen.screens
+    let primaryH = screens.first?.frame.height ?? 0
+    var out: [[String: Any]] = []
+    for (i, s) in screens.enumerated() {
+        let f = s.frame
+        var builtin = false
+        if let num = s.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber {
+            builtin = CGDisplayIsBuiltin(num.uint32Value) != 0
+        }
+        out.append([
+            "index": i,
+            "name": s.localizedName,
+            "x": Double(f.origin.x),
+            "y": Double(primaryH - (f.origin.y + f.height)),
+            "w": Double(f.width),
+            "h": Double(f.height),
+            "main": f.origin == .zero,
+            "builtin": builtin,
+        ])
+    }
+    return out
+}
+
+// display di destinazione: indice esplicito, altrimenti il primo esterno,
+// altrimenti il principale.
+func targetScreen(index: Int?) -> [String: Any]? {
+    let list = screenList()
+    if let i = index, i >= 0, i < list.count { return list[i] }
+    if let ext = list.first(where: { ($0["builtin"] as? Bool) == false }) { return ext }
+    return list.first
+}
+
+// Sposta la finestra in primo piano sul display scelto e, se richiesto, la porta
+// a schermo intero nativo (AXFullScreen). Richiede il permesso Accessibilità.
+func moveFrontWindow(displayIndex: Int?, fullscreen: Bool) {
+    guard let scr = targetScreen(index: displayIndex),
+          let app = NSWorkspace.shared.frontmostApplication else { return }
+    let axApp = AXUIElementCreateApplication(app.processIdentifier)
+    var winRef: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+          let winVal = winRef else { return }
+    let win = winVal as! AXUIElement
+    let x = scr["x"] as? Double ?? 0
+    let y = scr["y"] as? Double ?? 0
+    let w = scr["w"] as? Double ?? 0
+    let h = scr["h"] as? Double ?? 0
+    var pos = CGPoint(x: x, y: y)
+    var size = CGSize(width: w, height: h)
+    if let pv = AXValueCreate(.cgPoint, &pos) {
+        AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv)
+    }
+    if let sv = AXValueCreate(.cgSize, &size) {
+        AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+    }
+    if fullscreen {
+        var cur: CFTypeRef?
+        AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &cur)
+        if (cur as? Bool) != true {
+            AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString, kCFBooleanTrue)
+        }
+    }
+}
+
+// apre un URL in un browser specifico, poi sposta/mette a schermo intero la
+// finestra sul display di destinazione (dopo un breve ritardo, il tempo che la
+// finestra compaia).
+// browser supportati: "default" usa il handler di sistema; gli altri mappano a un
+// bundle id. Arc/Brave/Edge/Chrome sono tutti basati su Chromium e condividono
+// la stessa interfaccia AppleScript per l'iniezione di JavaScript.
+let browserBundleIDs: [String: String] = [
+    "chrome": "com.google.Chrome",
+    "arc": "com.company.thebrowser.Browser",
+    "brave": "com.brave.Browser",
+    "edge": "com.microsoft.edgemac",
+    "firefox": "org.mozilla.firefox",
+    "safari": "com.apple.Safari",
+]
+
+func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, fullscreen: Bool) {
+    guard let url = URL(string: urlString) else { return }
+    // "default": lascia che macOS apra l'URL con il browser predefinito
+    if browser == "default" {
+        NSWorkspace.shared.open(url)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+        }
+        return
+    }
+    guard let bundle = browserBundleIDs[browser],
+          let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
+        // browser richiesto non installato: fallback al browser di default
+        NSWorkspace.shared.open(url)
+        return
+    }
+    let cfg = NSWorkspace.OpenConfiguration()
+    cfg.activates = true
+    NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: cfg) { _, _ in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+        }
+    }
+}
+
+// MARK: - AppleScript / iniezione JavaScript nei browser
+//
+// Nota permessi: l'helper gira come figlio del terminale/Node, quindi macOS
+// attribuisce il permesso "Automazione" al processo che lo avvia. Serve
+// consentire il controllo di Chrome/Safari (e System Events) da quel processo.
+
+func escapeAppleScript(_ s: String) -> String {
+    return s.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+}
+
+func runAppleScript(_ source: String) -> (Bool, String) {
+    var error: NSDictionary?
+    if let script = NSAppleScript(source: source) {
+        let out = script.executeAndReturnError(&error)
+        if let err = error {
+            let msg = (err[NSAppleScript.errorMessage] as? String) ?? "errore AppleScript"
+            return (false, msg)
+        }
+        return (true, out.stringValue ?? "")
+    }
+    return (false, "compilazione AppleScript fallita")
+}
+
+// Esegue JS nella tab attiva del browser indicato e ne restituisce il risultato.
+// nome applicazione per l'AppleScript (i browser Chromium si chiamano così)
+let browserAppleScriptName: [String: String] = [
+    "chrome": "Google Chrome",
+    "arc": "Arc",
+    "brave": "Brave Browser",
+    "edge": "Microsoft Edge",
+]
+
+func execJSInBrowser(browser: String, js: String) -> (Bool, String) {
+    let escaped = escapeAppleScript(js)
+    if browser == "safari" {
+        let source = """
+        tell application "Safari"
+            if (count of windows) is 0 then return ""
+            do JavaScript "\(escaped)" in current tab of front window
+        end tell
+        """
+        return runAppleScript(source)
+    }
+    guard let appName = browserAppleScriptName[browser] else {
+        return (false, "browser non supportato per l'iniezione JS (usa Safari, Chrome, Arc, Brave o Edge)")
+    }
+    let source = """
+    tell application "\(appName)"
+        if (count of windows) is 0 then return ""
+        execute front window's active tab javascript "\(escaped)"
+    end tell
+    """
+    return runAppleScript(source)
+}
+
 struct Command: Decodable {
     let cmd: String
+    let id: Int?
     let x: Double?
     let y: Double?
     let dx: Double?
@@ -99,20 +284,23 @@ struct Command: Decodable {
     let key: String?
     let command: Bool?
     let control: Bool?
+    let url: String?
+    let browser: String?
+    let displayIndex: Int?
+    let fullscreen: Bool?
+    let source: String?
+    let js: String?
+    let visible: Bool?
 }
 
 let trusted = isTrusted()
-let hello: [String: Any] = [
+emit([
     "type": "helper",
     "trusted": trusted,
     "display": ["x": displayBounds.origin.x, "y": displayBounds.origin.y,
                 "w": displayBounds.width, "h": displayBounds.height],
-]
-if let data = try? JSONSerialization.data(withJSONObject: hello),
-   let line = String(data: data, encoding: .utf8) {
-    print(line)
-    fflush(stdout)
-}
+    "displays": screenList(),
+])
 
 let stdin = FileHandle.standardInput
 var buffer = Data()
@@ -139,6 +327,43 @@ stdin.readabilityHandler = { handle in
             if let key = cmd.key { pressKey(name: key, command: cmd.command ?? false, control: cmd.control ?? false) }
         case "media":
             if let key = cmd.key { mediaKey(key) }
+        case "cursor":
+            DispatchQueue.main.async { setCursorVisible(cmd.visible ?? true) }
+        case "displays":
+            DispatchQueue.main.async {
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": true, "data": screenList()])
+            }
+        case "openurl":
+            if let url = cmd.url {
+                DispatchQueue.main.async {
+                    openURLInBrowser(url, browser: cmd.browser ?? "chrome",
+                                     displayIndex: cmd.displayIndex, fullscreen: cmd.fullscreen ?? true)
+                }
+            }
+            emit(["type": "reply", "id": cmd.id ?? 0, "ok": true])
+        case "movefront":
+            DispatchQueue.main.async {
+                moveFrontWindow(displayIndex: cmd.displayIndex, fullscreen: cmd.fullscreen ?? false)
+            }
+            emit(["type": "reply", "id": cmd.id ?? 0, "ok": true])
+        case "applescript":
+            if let source = cmd.source {
+                DispatchQueue.main.async {
+                    let (ok, res) = runAppleScript(source)
+                    emit(["type": "reply", "id": cmd.id ?? 0, "ok": ok, "result": res])
+                }
+            } else {
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "source mancante"])
+            }
+        case "execjs":
+            if let js = cmd.js {
+                DispatchQueue.main.async {
+                    let (ok, res) = execJSInBrowser(browser: cmd.browser ?? "chrome", js: js)
+                    emit(["type": "reply", "id": cmd.id ?? 0, "ok": ok, "result": res])
+                }
+            } else {
+                emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "js mancante"])
+            }
         default:
             break
         }

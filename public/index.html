@@ -12,7 +12,7 @@
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=22">
+  <link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
 <main class="phone">
@@ -24,7 +24,7 @@
       <button class="connection" id="connection">
         <span class="led" id="led"></span>
         <span class="conntexts">
-          <strong id="device">MOUSE_PHONE / MAC · v22</strong>
+          <strong id="device">MOUSE_PHONE / MAC · v23</strong>
           <small id="statusText">○ CONNECTING</small>
         </span>
         <span class="chevron" id="chevron" aria-label="Apri pannello">⌄</span>
@@ -33,7 +33,14 @@
 
     <div class="brand">
       <span class="name">dot.</span>
-      <span class="mode" id="mode">/ TRACKPAD MODE</span>
+      <button class="dash" id="dash" aria-label="Apri Cinema">
+        <svg class="grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="4" y="4" width="7" height="7" rx="1.5"/>
+          <rect x="13" y="4" width="7" height="7" rx="1.5"/>
+          <rect x="4" y="13" width="7" height="7" rx="1.5"/>
+          <rect x="13" y="13" width="7" height="7" rx="1.5"/>
+        </svg>
+      </button>
     </div>
 
     <div class="trackpad" id="trackpad" aria-label="Area gesture per muovere il cursore">
@@ -63,6 +70,27 @@
       </div>
     </section>
   </div>
+
+  <section class="cinema" id="cinema" aria-hidden="true">
+    <header class="cine-head">
+      <button class="cine-back" id="cineBack" aria-label="Torna al trackpad">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>
+      </button>
+      <div class="cine-title">
+        <span class="name">dot.</span>
+        <span class="cine-mode">/ CINEMA</span>
+      </div>
+      <button class="cine-icon-btn" id="cineSettings" aria-label="Impostazioni Cinema">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.14.5.5.9 1 1.09H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </header>
+
+    <div class="cine-body" id="cineBody"></div>
+
+    <div class="cinesheet" id="cineSheet" aria-hidden="true">
+      <div class="cinesheet-card" id="cineSheetCard"></div>
+    </div>
+  </section>
 
   <div class="sheet" id="sheet">
     <div class="sheet-handle" id="sheetHandle"></div>
@@ -133,6 +161,8 @@
   <div class="toast" id="toast">READY</div>
   <div class="diag" id="diag" aria-hidden="true"></div>
 </main>
-<script src="app.js?v=22"></script>
+<script>window.__DOT_TOKEN__ = "__PAIR_TOKEN__";</script>
+<script src="app.js?v=23"></script>
+<script src="cinema.js?v=23"></script>
 </body>
 </html>

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "youtube",
+    "name": "YouTube",
+    "url": "https://www.youtube.com",
+    "icon": "▶"
+  },
+  {
+    "id": "netflix",
+    "name": "Netflix",
+    "url": "https://www.netflix.com",
+    "icon": "N"
+  },
+  {
+    "id": "plex",
+    "name": "Plex",
+    "url": "https://app.plex.tv",
+    "icon": "P"
+  }
+]

@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v22";
+  const BUILD = "v23";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -37,7 +37,9 @@
   const conn = $("connection");
   const device = $("device");
   const statusText = $("statusText");
-  const mode = $("mode");
+  const dashBtn = $("dash");
+  const cinema = $("cinema");
+  const cineBack = $("cineBack");
   const chevron = $("chevron");
   const sheet = $("sheet");
   const sheetHandle = $("sheetHandle");
@@ -72,6 +74,7 @@
   let calHoldTimer = null;
   let calLongFired = false;
   let sheetOpen = false;
+  let cinemaOpen = false;
   let toastTimer = null;
   let es = null;
   let outbox = [];
@@ -175,14 +178,13 @@
     if (powerOn) enqueue(obj);
   }
 
+  // segnala i cambi di stato (usato da cinema.js per il tema offline)
+  function updateStatusDot() {
+    document.dispatchEvent(new CustomEvent("dot:status"));
+  }
+
   function updateMode() {
-    mode.textContent = !powerOn
-      ? "/ OFFLINE"
-      : gyroPaused
-        ? "/ GYRO PAUSA"
-        : anchored
-          ? "/ TRACKPAD MODE"
-          : "/ POINTER MODE";
+    updateStatusDot();
   }
 
   function updateConn() {
@@ -191,6 +193,7 @@
     statusText.textContent = up ? "● CONNECTED" : "○ DISCONNECTED";
     if (hostname) device.textContent = `MOUSE_PHONE / ${hostname.toUpperCase()} · ${BUILD}`;
     updateDiag(up);
+    updateStatusDot();
   }
 
   function updateDiag(up) {
@@ -229,6 +232,8 @@
       if (msg.trusted === false) toastMsg("MANCA PERMESSO ACCESSIBILITÀ SUL MAC");
       updateConn();
     }
+    // inoltra a cinema.js (bookmarks/settings/displays/queue/history/nowplaying...)
+    document.dispatchEvent(new CustomEvent("dot:server", { detail: msg }));
   }
 
   function connect() {
@@ -1078,6 +1083,17 @@
     toastMsg(`CONNECTED TO ${hostname || "MAC"}`);
   });
 
+  // ---------- cinema ----------
+  function setCinema(open) {
+    cinemaOpen = open;
+    cinema.classList.toggle("open", open);
+    cinema.setAttribute("aria-hidden", open ? "false" : "true");
+    hapticTick();
+  }
+
+  dashBtn.addEventListener("click", () => setCinema(true));
+  cineBack.addEventListener("click", () => setCinema(false));
+
   // ---------- tastiera ----------
   function sendText() {
     const v = textInput.value.trim();
@@ -1216,6 +1232,7 @@
     if (!target || !target.closest) return true;
     if (target.closest(".trackpad")) return true;
     if (target.closest(".sheet")) return true;
+    if (target.closest(".cinema")) return true;
     if (target.closest("input")) return true;
     return sheetOpen;
   }
@@ -1306,6 +1323,17 @@
   updateMode();
   updateConn();
 
+  // API condivisa verso cinema.js (stesso stile/token/toast/haptics)
+  window.dot = {
+    toast: toastMsg,
+    haptic: hapticTick,
+    online: () => connected && powerOn,
+    status: () => ({ connected, powerOn, gyroPaused, anchored }),
+    token: () => window.__DOT_TOKEN__ || "",
+    BUILD,
+  };
+  document.dispatchEvent(new Event("dot:ready"));
+
   document.addEventListener("gesturestart", (e) => e.preventDefault());
   document.addEventListener("dblclick", (e) => e.preventDefault());
   document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -1318,6 +1346,7 @@
     (e) => {
       if (e.target.closest("input")) return;
       if (e.target.closest(".sheet")) return;
+      if (e.target.closest(".cinema")) return;
       if (pad.classList.contains("active")) return;
       e.preventDefault();
     },

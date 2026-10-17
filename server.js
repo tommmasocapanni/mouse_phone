@@ -48,6 +48,70 @@ if (!fs.existsSync(HELPER)) {
   process.exit(1);
 }
 
+// --- persistenza (file JSON in data/) ---
+const DATA = path.join(ROOT, "data");
+fs.mkdirSync(DATA, { recursive: true });
+
+function readJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(DATA, file), "utf8"));
+  } catch (_) {
+    return fallback;
+  }
+}
+
+// scrittura atomica: tmp + rename, così un crash non corrompe il file.
+function writeJson(file, value) {
+  const target = path.join(DATA, file);
+  const tmp = target + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(value, null, 2));
+  fs.renameSync(tmp, target);
+}
+
+// impostazioni: token di pairing (generato al primo avvio), browser,
+// display di destinazione, cartella film, player.
+const settings = Object.assign(
+  {
+    token: crypto.randomBytes(24).toString("hex"),
+    browser: "default",
+    displayIndex: null,
+    moviesRoot: path.join(os.homedir(), "Movies"),
+    player: "auto",
+  },
+  readJson("settings.json", {})
+);
+// se il browser salvato non è più installato, torna al browser di sistema
+if (!installedBrowsers().includes(settings.browser)) settings.browser = "default";
+writeJson("settings.json", settings);
+
+const DEFAULT_BOOKMARKS = [
+  { id: "youtube", name: "YouTube", url: "https://www.youtube.com", icon: "▶" },
+  { id: "netflix", name: "Netflix", url: "https://www.netflix.com", icon: "N" },
+  { id: "plex", name: "Plex", url: "https://app.plex.tv", icon: "P" },
+];
+let bookmarks = readJson("bookmarks.json", null);
+if (!Array.isArray(bookmarks)) {
+  bookmarks = DEFAULT_BOOKMARKS.map((b) => ({ ...b }));
+  writeJson("bookmarks.json", bookmarks);
+}
+
+// browser rilevati sul Mac. "default" apre con il browser di sistema di macOS.
+function installedBrowsers() {
+  const candidates = [
+    ["chrome", "/Applications/Google Chrome.app"],
+    ["arc", "/Applications/Arc.app"],
+    ["brave", "/Applications/Brave Browser.app"],
+    ["edge", "/Applications/Microsoft Edge.app"],
+    ["firefox", "/Applications/Firefox.app"],
+  ];
+  const list = ["default"];
+  for (const [id, app] of candidates) {
+    if (fs.existsSync(app)) list.push(id);
+  }
+  list.push("safari");
+  return list;
+}
+
 const MIME = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -131,6 +195,11 @@ div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacin
       return;
     }
 
+    if (url.pathname.startsWith("/api/")) {
+      handleApi(req, res, url);
+      return;
+    }
+
     let file = url.pathname === "/" ? "/index.html" : url.pathname;
     const full = path.normalize(path.join(PUB, file));
     if (!full.startsWith(PUB)) {
@@ -142,11 +211,16 @@ div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacin
         res.writeHead(404).end("not found");
         return;
       }
+      // inietta il token di pairing nella pagina: il client lo usa come Bearer.
+      let out = data;
+      if (file === "/index.html") {
+        out = Buffer.from(data.toString("utf8").replace(/__PAIR_TOKEN__/g, settings.token));
+      }
       res.writeHead(200, {
         "Content-Type": MIME[path.extname(full)] || "application/octet-stream",
         "Cache-Control": "no-store, must-revalidate",
       });
-      res.end(data);
+      res.end(out);
     });
   }
 );
@@ -173,10 +247,21 @@ function startHelper() {
       lineBuf = lineBuf.slice(idx + 1);
       try {
         const msg = JSON.parse(line);
+        if (msg.type === "reply") {
+          const pending = helperPending.get(msg.id);
+          if (pending) {
+            helperPending.delete(msg.id);
+            if (msg.ok) pending.resolve(msg);
+            else pending.reject(new Error(msg.error || "errore helper"));
+          }
+          continue;
+        }
         if (msg.type === "helper") {
           helperTrusted = !!msg.trusted;
           helperDisplay = msg.display || null;
+          helperDisplays = Array.isArray(msg.displays) ? msg.displays : helperDisplays;
           broadcastStatus();
+          broadcast({ type: "displays", displays: helperDisplays, target: settings.displayIndex });
           if (!helperTrusted) {
             console.log("⚠️  Concedi il permesso Accessibilità al terminale, poi riavvia con `npm start`");
           }
@@ -198,6 +283,302 @@ startHelper();
 function sendHelper(obj) {
   if (helper && helper.stdin.writable) {
     helper.stdin.write(JSON.stringify(obj) + "\n");
+  }
+}
+
+// --- chiamate helper con richiesta/risposta (id) ---
+let helperDisplays = [];
+let helperSeq = 0;
+const helperPending = new Map();
+
+function helperCall(cmd, timeout = 5000) {
+  return new Promise((resolve, reject) => {
+    if (!helper || !helper.stdin.writable) return reject(new Error("helper non disponibile"));
+    const id = ++helperSeq;
+    helperPending.set(id, { resolve, reject });
+    sendHelper(Object.assign({ id }, cmd));
+    setTimeout(() => {
+      if (helperPending.has(id)) {
+        helperPending.delete(id);
+        reject(new Error("timeout helper"));
+      }
+    }, timeout);
+  });
+}
+
+// --- utilità HTTP/API ---
+function readBody(req, limit = 2e6) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > limit) {
+        reject(new Error("body troppo grande"));
+        req.destroy();
+      }
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function jsonResponse(res, code, obj) {
+  res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  res.end(JSON.stringify(obj));
+}
+
+function isAuthed(req, url) {
+  const header = req.headers["authorization"] || "";
+  const m = /^Bearer\s+(.+)$/i.exec(header);
+  const token = (m ? m[1] : url.searchParams.get("token") || "").trim();
+  return token.length > 0 && token === settings.token;
+}
+
+// rate limit molto semplice in memoria, per IP.
+const rateBuckets = new Map();
+function rateLimited(key, max = 40, windowMs = 10000) {
+  const now = Date.now();
+  const arr = (rateBuckets.get(key) || []).filter((t) => now - t < windowMs);
+  arr.push(now);
+  rateBuckets.set(key, arr);
+  return arr.length > max;
+}
+
+// accetta solo URL http(s); restituisce la stringa normalizzata o null.
+function safeUrl(raw) {
+  try {
+    const u = new URL(String(raw || "").trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+function publicSettings() {
+  return {
+    browser: settings.browser,
+    displayIndex: settings.displayIndex,
+    moviesRoot: settings.moviesRoot,
+    player: settings.player,
+    browsers: installedBrowsers(),
+  };
+}
+
+const VIDEO_EXT = new Set([
+  ".mp4", ".mkv", ".mov", ".m4v", ".avi", ".webm", ".flv",
+  ".wmv", ".mpg", ".mpeg", ".ts", ".m2ts", ".ogv",
+]);
+
+// GET /api/files?path= — esplorazione della cartella film, confinata alla root.
+function listFiles(url, res) {
+  const root = path.resolve(settings.moviesRoot);
+  const rel = url.searchParams.get("path") || "";
+  const target = path.resolve(root, rel);
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    return jsonResponse(res, 403, { error: "fuori dalla cartella consentita" });
+  }
+  let entries;
+  try {
+    entries = fs.readdirSync(target, { withFileTypes: true });
+  } catch (_) {
+    return jsonResponse(res, 404, { error: "cartella non accessibile" });
+  }
+  const items = [];
+  for (const e of entries) {
+    if (e.name.startsWith(".")) continue;
+    const abs = path.join(target, e.name);
+    const item = { name: e.name, path: path.relative(root, abs), dir: e.isDirectory() };
+    if (!e.isDirectory()) {
+      try {
+        item.size = fs.statSync(abs).size;
+      } catch (_) {}
+      item.video = VIDEO_EXT.has(path.extname(e.name).toLowerCase());
+    }
+    items.push(item);
+  }
+  items.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+  return jsonResponse(res, 200, {
+    root,
+    path: path.relative(root, target),
+    items,
+  });
+}
+
+// apre un file locale nel player scelto (IINA > VLC > QuickTime).
+function launchPlayer(file, start, displayIndex) {
+  const candidates = [
+    { name: "iina", bin: "/Applications/IINA.app/Contents/MacOS/iina-cli" },
+    { name: "vlc", bin: "/Applications/VLC.app/Contents/MacOS/VLC" },
+  ];
+  const wanted = settings.player && settings.player !== "auto" ? settings.player : null;
+  for (const c of candidates) {
+    if (wanted && wanted !== c.name) continue;
+    if (!fs.existsSync(c.bin)) continue;
+    // IINA: iina-cli --mpv-start=<s> ; VLC: --start-time=<s>. Niente shell:
+    // argomenti passati direttamente a spawn.
+    const args = c.name === "iina"
+      ? ["--no-stdin", `--mpv-start=${start}`, "--mpv-fullscreen", `--mpv-screen=${displayIndex ?? 0}`, file]
+      : [`--start-time=${start}`, "--fullscreen", `--qt-fullscreen-screennumber=${displayIndex ?? 0}`, file];
+    try {
+      spawn(c.bin, args, { detached: true, stdio: "ignore" }).unref();
+      return c.name;
+    } catch (_) {}
+  }
+  if (wanted && wanted !== "quicktime") return null;
+  try {
+    spawn("open", ["-a", "QuickTime Player", file], { detached: true, stdio: "ignore" }).unref();
+    return "quicktime";
+  } catch (_) {
+    return null;
+  }
+}
+
+// scarica la favicon di un sito e la restituisce come data URI (tetto 100KB).
+async function fetchFavicon(rawUrl) {
+  const u = safeUrl(rawUrl);
+  if (!u) return "";
+  try {
+    const origin = new URL(u).origin;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const resp = await fetch(origin + "/favicon.ico", { signal: ctrl.signal, redirect: "follow" });
+    clearTimeout(timer);
+    if (!resp.ok) return "";
+    const type = resp.headers.get("content-type") || "image/x-icon";
+    if (!/^image\//.test(type)) return "";
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length === 0 || buf.length > 100 * 1024) return "";
+    return `data:${type};base64,${buf.toString("base64")}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+async function handleApi(req, res, url) {
+  const ip = (req.socket.remoteAddress || "?").replace("::ffff:", "");
+  if (rateLimited(ip)) return jsonResponse(res, 429, { error: "troppe richieste" });
+  if (!isAuthed(req, url)) return jsonResponse(res, 401, { error: "token mancante o errato" });
+
+  const p = url.pathname;
+  const method = req.method;
+
+  try {
+    if (p === "/api/settings" && method === "GET") {
+      return jsonResponse(res, 200, publicSettings());
+    }
+    if (p === "/api/settings" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      if (typeof b.browser === "string" && installedBrowsers().includes(b.browser)) settings.browser = b.browser;
+      if (b.displayIndex === null || Number.isInteger(b.displayIndex)) settings.displayIndex = b.displayIndex;
+      if (typeof b.moviesRoot === "string" && b.moviesRoot.trim()) settings.moviesRoot = path.resolve(b.moviesRoot.trim());
+      if (typeof b.player === "string") settings.player = b.player;
+      writeJson("settings.json", settings);
+      broadcast({ type: "settings", settings: publicSettings() });
+      return jsonResponse(res, 200, publicSettings());
+    }
+    if (p === "/api/displays" && method === "GET") {
+      let displays = helperDisplays;
+      try {
+        const rep = await helperCall({ cmd: "displays" });
+        if (Array.isArray(rep.data)) displays = rep.data;
+      } catch (_) {}
+      return jsonResponse(res, 200, { displays, target: settings.displayIndex });
+    }
+    if (p === "/api/bookmarks" && method === "GET") {
+      return jsonResponse(res, 200, { bookmarks });
+    }
+    if (p === "/api/bookmarks" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const clean = safeUrl(b.url);
+      if (!b.name || !clean) return jsonResponse(res, 400, { error: "nome e url http(s) richiesti" });
+      const bm = {
+        id: "bm_" + crypto.randomBytes(4).toString("hex"),
+        name: String(b.name).trim().slice(0, 40),
+        url: clean,
+        icon: typeof b.icon === "string" ? b.icon.slice(0, 400000) : "",
+      };
+      bookmarks.push(bm);
+      writeJson("bookmarks.json", bookmarks);
+      broadcast({ type: "bookmarks", bookmarks });
+      return jsonResponse(res, 200, { bookmark: bm, bookmarks });
+    }
+    const bmMatch = p.match(/^\/api\/bookmarks\/([A-Za-z0-9_]+)$/);
+    if (bmMatch) {
+      const idx = bookmarks.findIndex((x) => x.id === bmMatch[1]);
+      if (idx < 0) return jsonResponse(res, 404, { error: "bookmark non trovato" });
+      if (method === "PATCH" || method === "PUT") {
+        const b = JSON.parse((await readBody(req)) || "{}");
+        if (typeof b.name === "string" && b.name.trim()) bookmarks[idx].name = b.name.trim().slice(0, 40);
+        if (typeof b.url === "string") {
+          const clean = safeUrl(b.url);
+          if (clean) bookmarks[idx].url = clean;
+        }
+        if (typeof b.icon === "string") bookmarks[idx].icon = b.icon.slice(0, 400000);
+        writeJson("bookmarks.json", bookmarks);
+        broadcast({ type: "bookmarks", bookmarks });
+        return jsonResponse(res, 200, { bookmarks });
+      }
+      if (method === "DELETE") {
+        bookmarks.splice(idx, 1);
+        writeJson("bookmarks.json", bookmarks);
+        broadcast({ type: "bookmarks", bookmarks });
+        return jsonResponse(res, 200, { bookmarks });
+      }
+    }
+    if (p === "/api/bookmarks/reorder" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      if (Array.isArray(b.order)) {
+        const map = new Map(bookmarks.map((x) => [x.id, x]));
+        const ordered = b.order.map((id) => map.get(id)).filter(Boolean);
+        for (const x of bookmarks) if (!b.order.includes(x.id)) ordered.push(x);
+        bookmarks = ordered;
+        writeJson("bookmarks.json", bookmarks);
+        broadcast({ type: "bookmarks", bookmarks });
+      }
+      return jsonResponse(res, 200, { bookmarks });
+    }
+    if (p === "/api/open" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const clean = safeUrl(b.url);
+      if (!clean) return jsonResponse(res, 400, { error: "url non valido (http/https)" });
+      await helperCall({
+        cmd: "openurl",
+        url: clean,
+        browser: settings.browser,
+        displayIndex: settings.displayIndex,
+        fullscreen: true,
+      });
+      return jsonResponse(res, 200, { ok: true });
+    }
+    if (p === "/api/files" && method === "GET") {
+      return listFiles(url, res);
+    }
+    if (p === "/api/play" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const root = path.resolve(settings.moviesRoot);
+      const abs = path.resolve(root, String(b.path || ""));
+      if (abs !== root && !abs.startsWith(root + path.sep)) {
+        return jsonResponse(res, 403, { error: "fuori dalla cartella consentita" });
+      }
+      if (!fs.existsSync(abs)) return jsonResponse(res, 404, { error: "file non trovato" });
+      const start = Math.max(0, Math.floor(Number(b.start) || 0));
+      const player = launchPlayer(abs, start, settings.displayIndex);
+      if (!player) return jsonResponse(res, 500, { error: "nessun player disponibile (IINA/VLC/QuickTime)" });
+      // sposta la finestra del player sul display di destinazione
+      setTimeout(() => {
+        helperCall({ cmd: "movefront", displayIndex: settings.displayIndex, fullscreen: false }).catch(() => {});
+      }, 1600);
+      return jsonResponse(res, 200, { ok: true, player });
+    }
+    if (p === "/api/favicon" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const icon = await fetchFavicon(b.url);
+      return jsonResponse(res, 200, { icon });
+    }
+    return jsonResponse(res, 404, { error: "endpoint sconosciuto" });
+  } catch (err) {
+    return jsonResponse(res, 500, { error: err.message });
   }
 }
 
@@ -279,15 +660,19 @@ function sendSse(res, obj) {
   try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {}
 }
 
+function broadcast(obj) {
+  const data = JSON.stringify(obj);
+  for (const c of wss.clients) if (c.readyState === 1) c.send(data);
+  for (const res of sseClients) sendSse(res, obj);
+}
+
 function broadcastStatus() {
-  const data = JSON.stringify({
+  broadcast({
     type: "status",
     trusted: helperTrusted,
     display: helperDisplay,
     hostname: BONJOUR,
   });
-  for (const c of wss.clients) if (c.readyState === 1) c.send(data);
-  for (const res of sseClients) sendSse(res, JSON.parse(data));
 }
 
 wss.on("connection", (ws, req) => {
