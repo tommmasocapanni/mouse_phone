@@ -147,24 +147,22 @@
         </div>
       </div>
     </div>
-    <div class="np-full-art" id="npFullArt"></div>
+    <div class="np-coverflow solo" id="npCoverflow">
+      <div class="np-coverflow-track" id="npCoverflowTrack"></div>
+    </div>
     <div class="np-full-info">
       <div class="np-full-title" id="npFullTitle">—</div>
       <div class="np-full-site" id="npFullSite"></div>
+      <button class="np-preview-play" id="npPreviewPlay" type="button" hidden aria-label="Riproduci ora">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5l12 7-12 7z"/></svg>
+        <span>RIPRODUCI</span>
+      </button>
     </div>
     <div class="np-queue" id="npQueue" hidden>
       <div class="np-queue-head">CONTINUE PLAYING</div>
       <div class="np-queue-list" id="npQueueList"></div>
     </div>
     <div class="np-full-spacer"></div>
-    <div class="np-full-seek">
-      <button class="np-seek" id="npBack" type="button" aria-label="Indietro 5 secondi">
-        <span class="np-seek-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
-      </button>
-      <button class="np-seek" id="npFwd" type="button" aria-label="Avanti 5 secondi">
-        <span class="np-seek-ico flip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
-      </button>
-    </div>
     <div class="np-full-scrub" id="npScrub">
       <div class="np-seek-bubble" id="npSeekBubble">0:00</div>
       <div class="np-full-track" id="npFullTrack">
@@ -174,12 +172,18 @@
     </div>
     <div class="np-full-times"><span id="npFullCur">0:00</span><span id="npFullDur">0:00</span></div>
     <div class="np-full-controls">
+      <button class="np-seek" id="npBack" type="button" aria-label="Indietro 5 secondi">
+        <span class="np-seek-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
+      </button>
       <button class="np-ctl np-ctl-icon" id="npFullPrev" type="button" aria-label="Precedente">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 5v14"/><path d="M20 5v14l-12-7z" fill="currentColor"/></svg>
       </button>
       <button class="np-ctl np-ctl-play" id="npFullPlay" aria-label="Play / Pausa"></button>
       <button class="np-ctl np-ctl-icon" id="npFullNext" type="button" aria-label="Successivo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5v14"/><path d="M4 5v14l12-7z" fill="currentColor"/></svg>
+      </button>
+      <button class="np-seek" id="npFwd" type="button" aria-label="Avanti 5 secondi">
+        <span class="np-seek-ico flip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
       </button>
     </div>
     <div class="np-full-toggles">

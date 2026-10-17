@@ -206,7 +206,14 @@
   // ---------- now playing (mini-player + schermata a tutto schermo) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0, queueClearing: false };
+  const COVERFLOW_MAX_DISTANCE = 2;
+  const COVERFLOW_SCALE = [1, 0.82, 0.68];
+  const COVERFLOW_SPACING = [0, 0.66, 0.92];
+  const COVERFLOW_ROTATION = [0, 38, 52];
+  const COVERFLOW_OPACITY = [1, 0.72, 0.42];
+  const COVERFLOW_SHADE = [0, 0.25, 0.5];
+  const COVERFLOW_SNAP_PX = 40;
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0, queueClearing: false, currentTrack: null };
 
   // avvia una transizione tra brani: mantiene viva la UI finché il nuovo video
   // non è pronto (evita che il player "sparisca e ricompaia")
@@ -240,7 +247,10 @@
   const npVolVal = document.getElementById("npVolVal");
   const npBack = document.getElementById("npBack");
   const npFwd = document.getElementById("npFwd");
-  const npFullArt = document.getElementById("npFullArt");
+  const npCoverflow = document.getElementById("npCoverflow");
+  const npCoverflowTrack = document.getElementById("npCoverflowTrack");
+  const npPreviewPlay = document.getElementById("npPreviewPlay");
+  const npFullInfo = document.querySelector(".np-full-info");
   const npFullTitle = document.getElementById("npFullTitle");
   const npFullSite = document.getElementById("npFullSite");
   const npFullTrack = document.getElementById("npFullTrack");
@@ -317,6 +327,10 @@
     np.fullOpen = true;
     npFull.classList.add("show");
     npFull.setAttribute("aria-hidden", "false");
+    npCoverflow.classList.remove("ready");
+    renderCoverflow();
+    requestAnimationFrame(() => npCoverflow.classList.add("ready"));
+    if (!queueLoaded) loadQueue();
     pollNp();
   }
   function closeNpFull() {
@@ -395,10 +409,264 @@
   const nqMenu = document.getElementById("nqMenu");
   let queueItems = [];
   let queueIndex = -1;
+  let queueLoaded = false;
+  let queueRevision = 0;
+  let queueLoadSerial = 0;
+  let coverCurrentUrl = "";
+  let coverFocusKey = "current";
+  let coverItems = [];
+  let coverCardNodes = new Map();
+  let coverInfoTimer = null;
+  let coverPointer = null;
+  let coverSuppressClick = false;
 
   function hostOf(url) {
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
   }
+
+  function youtubeVideoId(url) {
+    try {
+      const parsed = new URL(url);
+      let id = parsed.searchParams.get("v");
+      if (!id && parsed.hostname.endsWith("youtu.be")) id = parsed.pathname.slice(1).split("/")[0];
+      if (!id) {
+        const match = parsed.pathname.match(/\/(?:embed|shorts)\/([A-Za-z0-9_-]{11})/);
+        id = match ? match[1] : "";
+      }
+      return /^[A-Za-z0-9_-]{11}$/.test(id || "") ? id : "";
+    } catch (_) { return ""; }
+  }
+
+  function youtubeThumbnail(url) {
+    const id = youtubeVideoId(url);
+    return id ? `https://img.youtube.com/vi/${id}/hqdefault.jpg` : "";
+  }
+
+  function sameMediaUrl(a, b) {
+    const aVideo = youtubeVideoId(a);
+    const bVideo = youtubeVideoId(b);
+    if (aVideo || bVideo) return !!aVideo && aVideo === bVideo;
+    try {
+      const left = new URL(a);
+      const right = new URL(b);
+      return left.origin === right.origin && left.pathname === right.pathname && left.search === right.search;
+    } catch (_) { return false; }
+  }
+
+  function currentQueueIndex() {
+    if (!np.currentTrack || !np.currentTrack.url) return -1;
+    if (queueIndex >= 0 && queueIndex < queueItems.length && sameMediaUrl(queueItems[queueIndex].url || "", np.currentTrack.url)) return queueIndex;
+    return queueItems.findIndex((item) => sameMediaUrl(item.url || "", np.currentTrack.url));
+  }
+
+  function currentCoverKey() {
+    const index = currentQueueIndex();
+    return index >= 0 && queueItems[index].id ? queueItems[index].id : "current";
+  }
+
+  function queueCoverItem(item) {
+    return {
+      key: item.id,
+      id: item.id,
+      url: item.url || "",
+      title: item.title || hostOf(item.url) || item.url || "MEDIA",
+      site: hostOf(item.url),
+      art: item.thumbnail || item.thumbnailUrl || item.art || youtubeThumbnail(item.url || ""),
+      isCurrent: false,
+    };
+  }
+
+  function getCoverItems() {
+    if (!np.currentTrack) return [];
+    const playingIndex = currentQueueIndex();
+    const current = Object.assign({
+      key: playingIndex >= 0 && queueItems[playingIndex].id ? queueItems[playingIndex].id : "current",
+      id: null,
+      isCurrent: true,
+    }, np.currentTrack);
+    const before = playingIndex >= 0 ? queueItems.slice(0, playingIndex) : [];
+    const after = playingIndex >= 0 ? queueItems.slice(playingIndex + 1) : queueItems;
+    return before.map(queueCoverItem).concat(current, after.map(queueCoverItem));
+  }
+
+  function selectedCoverItem() {
+    return coverItems.find((item) => item.key === coverFocusKey) || coverItems[0] || null;
+  }
+
+  function updateCoverInfo(item) {
+    if (!item) return;
+    const title = item.title || "MEDIA";
+    const site = item.site || item.url || "";
+    const changed = npFullTitle.textContent !== title || npFullSite.textContent !== site;
+    if (changed && np.fullOpen) {
+      npFullInfo.classList.add("changing");
+      clearTimeout(coverInfoTimer);
+      coverInfoTimer = setTimeout(() => {
+        npFullTitle.textContent = title;
+        npFullSite.textContent = site;
+        requestAnimationFrame(() => npFullInfo.classList.remove("changing"));
+      }, 75);
+    } else {
+      npFullTitle.textContent = title;
+      npFullSite.textContent = site;
+      npFullInfo.classList.remove("changing");
+    }
+    const canPlay = !item.isCurrent && !!item.id;
+    npPreviewPlay.hidden = !canPlay;
+    npPreviewPlay.dataset.id = canPlay ? item.id : "";
+  }
+
+  function createCoverCard() {
+    const card = h("button", { class: "np-cover-card", type: "button", tabindex: "0" });
+    const image = h("img", { alt: "", draggable: "false", decoding: "async" });
+    image.addEventListener("load", () => { image.dataset.failedSrc = ""; });
+    image.addEventListener("error", () => {
+      if (image.dataset.requestedSrc !== image.src) return;
+      image.dataset.failedSrc = image.dataset.requestedArt;
+      image.removeAttribute("src");
+      card.classList.remove("has-art");
+    });
+    card.append(image);
+    return card;
+  }
+
+  function renderCoverflow() {
+    coverItems = getCoverItems();
+    if (!coverItems.some((item) => item.key === coverFocusKey)) coverFocusKey = currentCoverKey();
+    const focusIndex = Math.max(0, coverItems.findIndex((item) => item.key === coverFocusKey));
+    const visible = new Map();
+    for (let index = Math.max(0, focusIndex - COVERFLOW_MAX_DISTANCE); index <= Math.min(coverItems.length - 1, focusIndex + COVERFLOW_MAX_DISTANCE); index++) {
+      visible.set(coverItems[index].key, { item: coverItems[index], index, offset: index - focusIndex });
+    }
+
+    const liveKeys = new Set(coverItems.map((item) => item.key));
+    for (const [key, card] of coverCardNodes) {
+      if (visible.has(key)) continue;
+      coverCardNodes.delete(key);
+      if (!liveKeys.has(key) && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        card.classList.add("is-exiting");
+        card.classList.remove("is-current");
+        card.tabIndex = -1;
+        setTimeout(() => card.remove(), 220);
+      } else card.remove();
+    }
+    for (const { item, index, offset } of visible.values()) {
+      let card = coverCardNodes.get(item.key);
+      if (!card) {
+        card = createCoverCard();
+        card.classList.add("is-entering");
+        coverCardNodes.set(item.key, card);
+        npCoverflowTrack.append(card);
+        requestAnimationFrame(() => {
+          npCoverflow.classList.add("ready");
+          card.classList.remove("is-entering");
+        });
+      }
+      const distance = Math.abs(offset);
+      const side = Math.sign(offset);
+      // COVERFLOW_* indicizzano scala, angolo e opacità per distanza; lo shift usa la larghezza della cover per adattarsi allo schermo.
+      const thumb = item.art || "";
+      const image = card.querySelector("img");
+      if (thumb && image.getAttribute("src") !== thumb && image.dataset.failedSrc !== thumb) {
+        image.loading = distance > 1 ? "lazy" : "eager";
+        image.dataset.requestedArt = thumb;
+        image.src = thumb;
+        image.dataset.requestedSrc = image.src;
+        card.classList.add("has-art");
+      } else if (!thumb && image.hasAttribute("src")) {
+        image.removeAttribute("src");
+        card.classList.remove("has-art");
+      }
+      card.classList.toggle("is-current", item.isCurrent);
+      card.classList.toggle("is-exiting", false);
+      card.dataset.key = item.key;
+      card.dataset.index = index;
+      card.style.setProperty("--np-entry-x", `${side * 24}%`);
+      card.setAttribute("aria-label", item.title || "MEDIA");
+      card.style.setProperty("--np-distance", String(distance));
+      card.style.transitionDelay = `${distance * 40}ms`;
+      card.style.setProperty("--np-scale", String(COVERFLOW_SCALE[distance]));
+      card.style.setProperty("--np-opacity", String(COVERFLOW_OPACITY[distance]));
+      card.style.setProperty("--np-shade", String(COVERFLOW_SHADE[distance]));
+      card.style.setProperty("--np-z", String(10 - distance));
+      card.style.setProperty("--np-x", `${side * COVERFLOW_SPACING[distance] * 100}%`);
+      card.style.setProperty("--np-rotate", `${-side * COVERFLOW_ROTATION[distance]}deg`);
+    }
+
+    npCoverflow.classList.toggle("solo", coverItems.length <= 1);
+    updateCoverInfo(selectedCoverItem());
+  }
+
+  function focusCoverItem(key, keepDragX = false) {
+    coverFocusKey = coverItems.some((item) => item.key === key) ? key : "current";
+    if (!keepDragX) npCoverflowTrack.style.removeProperty("--np-drag-x");
+    renderCoverflow();
+  }
+
+  function loadQueue() {
+    const requestSerial = ++queueLoadSerial;
+    const requestRevision = queueRevision;
+    return api("/api/queue", { method: "GET" }).then((r) => {
+      if (requestSerial !== queueLoadSerial || requestRevision !== queueRevision) return;
+      queueItems = (r && Array.isArray(r.queue)) ? r.queue : [];
+      queueIndex = r && typeof r.index === "number" ? r.index : -1;
+      queueLoaded = true;
+      renderQueue();
+      renderCoverflow();
+    }).catch(() => {});
+  }
+
+  npCoverflow.addEventListener("pointerdown", (e) => {
+    if (npFull.classList.contains("queue") || (e.pointerType === "mouse" && e.button !== 0)) return;
+    coverPointer = { id: e.pointerId, x: e.clientX, y: e.clientY, lastX: e.clientX, lastAt: performance.now(), velocity: 0, dragging: false };
+  });
+  npCoverflow.addEventListener("pointermove", (e) => {
+    if (!coverPointer || e.pointerId !== coverPointer.id) return;
+    const dx = e.clientX - coverPointer.x;
+    const dy = e.clientY - coverPointer.y;
+    if (!coverPointer.dragging && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      coverPointer.dragging = true;
+      npCoverflow.classList.add("dragging");
+      try { npCoverflow.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    if (!coverPointer.dragging) return;
+    e.preventDefault();
+    const now = performance.now();
+    coverPointer.velocity = (e.clientX - coverPointer.lastX) / Math.max(1, now - coverPointer.lastAt);
+    coverPointer.lastX = e.clientX;
+    coverPointer.lastAt = now;
+    npCoverflowTrack.style.setProperty("--np-drag-x", `${dx}px`);
+  });
+  function endCoverPointer(e) {
+    if (!coverPointer || (e && e.pointerId !== coverPointer.id)) return;
+    const gesture = coverPointer;
+    coverPointer = null;
+    npCoverflow.classList.remove("dragging");
+    if (!gesture.dragging) {
+      npCoverflowTrack.style.removeProperty("--np-drag-x");
+      return;
+    }
+    coverSuppressClick = true;
+    setTimeout(() => { coverSuppressClick = false; }, 80);
+    const dx = (e && e.clientX != null ? e.clientX : gesture.lastX) - gesture.x;
+    const moved = Math.abs(dx) >= COVERFLOW_SNAP_PX || (Math.abs(dx) > 18 && Math.abs(gesture.velocity) > 0.45);
+    if (moved) {
+      const index = Math.max(0, Math.min(coverItems.length - 1,
+        coverItems.findIndex((item) => item.key === coverFocusKey) + (dx < 0 ? 1 : -1)));
+      focusCoverItem(coverItems[index].key, true);
+    } else renderCoverflow();
+    npCoverflowTrack.style.setProperty("--np-drag-x", "0px");
+  }
+  npCoverflow.addEventListener("pointerup", endCoverPointer);
+  npCoverflow.addEventListener("pointercancel", endCoverPointer);
+  npCoverflow.addEventListener("click", (e) => {
+    if (coverSuppressClick) { e.preventDefault(); return; }
+    const card = e.target.closest(".np-cover-card");
+    if (card) focusCoverItem(card.dataset.key);
+  });
+  npPreviewPlay.addEventListener("click", () => {
+    if (npPreviewPlay.dataset.id) playQueueItem(npPreviewPlay.dataset.id);
+  });
 
   function setFavicon(el, url) {
     const host = hostOf(url);
@@ -436,15 +704,6 @@
     }
   }
 
-  async function loadQueue() {
-    try {
-      const r = await api("/api/queue", { method: "GET" });
-      queueItems = (r && r.queue) || [];
-      queueIndex = r && typeof r.index === "number" ? r.index : -1;
-      renderQueue();
-    } catch (_) {}
-  }
-
   function hideNqMenu() { nqMenu.hidden = true; nqMenu.dataset.id = ""; }
 
   function openNqMenu(btn, id) {
@@ -468,6 +727,7 @@
     dot.haptic();
     const on = !npFull.classList.contains("queue");
     npFull.classList.toggle("queue", on);
+    if (on) focusCoverItem("current");
     npQueue.hidden = !on;
     npFullQueue.classList.toggle("active", on);
     if (on) { closeVol(); loadQueue(); }
@@ -551,6 +811,17 @@
     np.paused = !!d.paused;
     np.current = Number(d.current) || 0;
     np.duration = Number(d.duration) || 0;
+    const playingUrl = String(d.url || "");
+    np.currentTrack = {
+      url: playingUrl,
+      title: d.title || "MEDIA",
+      site: d.site || hostOf(playingUrl),
+      art: d.art || "",
+    };
+    if (playingUrl !== coverCurrentUrl) {
+      coverCurrentUrl = playingUrl;
+      coverFocusKey = currentCoverKey();
+    }
 
     npMini.classList.add("show");
     document.getElementById("cinema").classList.add("has-np");
@@ -565,9 +836,7 @@
     setMiniTitle(d.title || "MEDIA");
     if (homeMiniSub) homeMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) + (d.site ? " · " + d.site : "");
 
-    setArt(npFullArt, d.art, d.site);
-    npFullTitle.textContent = d.title || "MEDIA";
-    npFullSite.textContent = d.site || d.url || "";
+    renderCoverflow();
     npFullDur.textContent = fmtTime(np.duration);
     if (!np.scrubbing) {
       npFullCur.textContent = fmtTime(np.current);
@@ -1175,14 +1444,19 @@
     } else if (msg.type === "displays" && Array.isArray(msg.displays)) {
       state.displays = msg.displays;
     } else if (msg.type === "queue" && Array.isArray(msg.queue)) {
+      queueRevision++;
       queueItems = msg.queue;
       queueIndex = typeof msg.index === "number" ? msg.index : -1;
+      queueLoaded = true;
       if (!npQueue.hidden) renderQueue();
+      renderCoverflow();
       if (msg.autoplay && msg.queue.length) {
         np.next = true;
         if (npFullAuto) npFullAuto.classList.add("active");
         dot.toast("PLAYLIST IN CODA · AUTOPLAY ON");
       }
+    } else if (msg.type === "nowplaying") {
+      applyNp(msg.nowplaying || msg.data || msg);
     }
   });
 
