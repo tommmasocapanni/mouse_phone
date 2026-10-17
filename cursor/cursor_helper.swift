@@ -53,6 +53,7 @@ func doubleClick(button: String) {
               let u = CGEvent(mouseEventSource: nil, mouseType: up,
                               mouseCursorPosition: point, mouseButton: type) else { return }
         d.setIntegerValueField(.mouseEventClickState, value: Int64(state))
+        u.setIntegerValueField(.mouseEventClickState, value: Int64(state))
         d.post(tap: .cghidEventTap)
         u.post(tap: .cghidEventTap)
         if state == 1 { usleep(50000) }

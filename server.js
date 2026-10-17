@@ -1012,6 +1012,9 @@ function handleMessage(msg) {
     case "click":
       sendHelper({ cmd: "click", button: msg.button === "right" ? "right" : "left" });
       break;
+    case "doubleclick":
+      sendHelper({ cmd: "doubleclick", button: msg.button === "right" ? "right" : "left" });
+      break;
     case "scroll":
       sendHelper({ cmd: "scroll", dx: Number(msg.dx) || 0, dy: Number(msg.dy) || 0 });
       break;

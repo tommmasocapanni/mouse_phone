@@ -748,6 +748,7 @@
   const pointers = new Map();
   let press = null;
   let lastTapAt = 0;
+  let singleTapTimer = null;
   let padCentroid = null;
   let twoFinger = null;
   let threeFinger = null;
@@ -951,13 +952,25 @@
           addPulse(p.x, p.y);
           const now = Date.now();
           if (lastTapAt && now - lastTapAt < DOUBLE_TAP_MS) {
+            clearTimeout(singleTapTimer);
+            singleTapTimer = null;
             lastTapAt = 0;
             send({ type: "doubleclick", button: "left" });
             toastMsg("DOPPIO CLICK");
             hapticTick();
           } else {
+            if (singleTapTimer) {
+              clearTimeout(singleTapTimer);
+              send({ type: "click", button: "left" });
+            }
             lastTapAt = now;
-            send({ type: "click", button: "left" });
+            const tapAt = now;
+            singleTapTimer = setTimeout(() => {
+              if (lastTapAt !== tapAt) return;
+              singleTapTimer = null;
+              lastTapAt = 0;
+              send({ type: "click", button: "left" });
+            }, DOUBLE_TAP_MS);
             hapticTick();
           }
         }
