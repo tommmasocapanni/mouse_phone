@@ -110,6 +110,7 @@
   function render() {
     bodyEl.textContent = "";
     bodyEl.append(sectionLauncher());
+    bodyEl.append(sectionNowPlaying());
     applyOffline();
   }
 
@@ -177,6 +178,117 @@
     castModalEl.classList.remove("open");
     castModalEl.setAttribute("aria-hidden", "true");
   }
+
+  // ---------- now playing (controllo player via iniezione JS) ----------
+  const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
+  const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0 };
+  let npBarEl, npPlayBtn, npTitleEl, npCurEl, npDurEl, npFillEl, npTrackEl;
+
+  function fmtTime(s) {
+    s = Math.max(0, Math.floor(Number(s) || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = s % 60;
+    const mm = h ? String(m).padStart(2, "0") : String(m);
+    return (h ? h + ":" : "") + mm + ":" + String(ss).padStart(2, "0");
+  }
+
+  function setNpIcon(paused) {
+    if (npPlayBtn) npPlayBtn.innerHTML = paused ? NP_PLAY_SVG : NP_PAUSE_SVG;
+  }
+
+  function sectionNowPlaying() {
+    const head = h("div", { class: "cine-sec-head" }, h("strong", { text: "02 / ORA IN RIPRODUZIONE" }));
+
+    npPlayBtn = h("button", { class: "np-play", type: "button", "aria-label": "Play / Pausa", onclick: npToggle });
+    setNpIcon(true);
+
+    npTitleEl = h("div", { class: "np-title", text: "—" });
+    npCurEl = h("span", { class: "np-cur", text: "0:00" });
+    npDurEl = h("span", { class: "np-dur", text: "0:00" });
+    const info = h("div", { class: "np-info" }, npTitleEl,
+      h("div", { class: "np-time" }, npCurEl, h("span", { class: "np-sep", text: " / " }), npDurEl));
+
+    npFillEl = h("div", { class: "np-fill" });
+    npTrackEl = h("div", { class: "np-track", onclick: onNpSeek }, npFillEl);
+
+    npBarEl = h("div", { class: "np-bar idle" }, h("div", { class: "np-row" }, npPlayBtn, info), npTrackEl);
+    return h("section", { class: "cine-sec" }, head, npBarEl);
+  }
+
+  function applyNp(d) {
+    if (!npBarEl) return;
+    if (!d || !d.found) {
+      np.found = false;
+      np.paused = true;
+      setNpIcon(true);
+      npTitleEl.textContent =
+        d && d.reason === "permission" ? "ABILITA JS DA APPLE EVENTS NEL BROWSER ⚙"
+          : d && d.reason === "no-browser" ? "SELEZIONA UN BROWSER SPECIFICO ⚙"
+            : "NESSUN MEDIA IN RIPRODUZIONE";
+      npCurEl.textContent = "0:00";
+      npDurEl.textContent = "0:00";
+      npFillEl.style.width = "0%";
+      npBarEl.classList.add("idle");
+      return;
+    }
+    np.found = true;
+    np.paused = !!d.paused;
+    np.current = Number(d.current) || 0;
+    np.duration = Number(d.duration) || 0;
+    setNpIcon(np.paused);
+    npTitleEl.textContent = d.title || "MEDIA";
+    npCurEl.textContent = fmtTime(np.current);
+    npDurEl.textContent = fmtTime(np.duration);
+    npFillEl.style.width = (np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0) + "%";
+    npBarEl.classList.remove("idle");
+  }
+
+  async function pollNp() {
+    if (!np.running || np.busy) return;
+    np.busy = true;
+    try { applyNp(await api("/api/nowplaying", { method: "GET" })); } catch (_) {}
+    np.busy = false;
+  }
+
+  function startNp() {
+    if (np.running) return;
+    np.running = true;
+    pollNp();
+    np.timer = setInterval(pollNp, 1500);
+  }
+  function stopNp() {
+    np.running = false;
+    if (np.timer) { clearInterval(np.timer); np.timer = null; }
+  }
+
+  async function npToggle() {
+    if (!np.found) { pollNp(); return; }
+    if (!ensureOnline()) return;
+    dot.haptic();
+    const newPaused = !np.paused;
+    np.paused = newPaused;
+    setNpIcon(newPaused);
+    try { await api("/api/player", { method: "POST", body: { action: newPaused ? "pause" : "play" } }); } catch (_) {}
+    pollNp();
+  }
+
+  function onNpSeek(e) {
+    if (!np.found || !np.duration) return;
+    const rect = npTrackEl.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
+    const sec = ratio * np.duration;
+    npFillEl.style.width = ratio * 100 + "%";
+    npCurEl.textContent = fmtTime(sec);
+    dot.haptic();
+    api("/api/seek", { method: "POST", body: { seconds: sec } }).catch(() => {});
+  }
+
+  document.addEventListener("dot:cinema", (e) => {
+    if (e.detail && e.detail.open) startNp();
+    else stopNp();
+  });
 
   function displayBar() {
     return h("button", { class: "cine-bar", onclick: () => { dot.haptic(); openDisplaySheet(); } },
@@ -407,6 +519,30 @@
     }
     const rootI = h("input", { class: "cs-input", type: "text", value: s.moviesRoot || "", autocapitalize: "off", autocorrect: "off", spellcheck: "false" });
 
+    const diagOut = h("div", { class: "cs-diag" });
+    const diagBtn = h("button", { class: "cs-chip", text: "TESTA CONTROLLO PLAYER", onclick: async () => {
+      diagOut.textContent = "…";
+      diagOut.className = "cs-diag";
+      try {
+        const d = await api("/api/nowplaying", { method: "GET" });
+        if (d.found) {
+          diagOut.textContent = "OK · " + (d.title || "media") + " (" + fmtTime(d.current) + " / " + fmtTime(d.duration) + ")";
+          diagOut.classList.add("ok");
+        } else if (d.reason === "permission") {
+          diagOut.textContent = "PERMESSO NEGATO · " + (d.error || "abilita JS da Apple Events e il controllo (Automazione)");
+          diagOut.classList.add("err");
+        } else if (d.reason === "no-browser") {
+          diagOut.textContent = "NESSUNA TAB · scegli un browser specifico qui sopra";
+          diagOut.classList.add("err");
+        } else if (d.reason === "no-window") {
+          diagOut.textContent = "OK (permesso) · nessuna finestra aperta nel browser";
+          diagOut.classList.add("ok");
+        } else {
+          diagOut.textContent = "NESSUN MEDIA NELLA TAB ATTIVA (" + (d.browser || "?") + ")";
+        }
+      } catch (e) { diagOut.textContent = "ERRORE · " + e.message; diagOut.classList.add("err"); }
+    }});
+
     openSheet(h("div", {},
       sheetHead("IMPOSTAZIONI"),
       h("div", { class: "cs-label", text: "BROWSER" }), browserRow,
@@ -418,7 +554,8 @@
           render();
           dot.toast("SALVATO");
         } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
-      }})
+      }}),
+      h("div", { class: "cs-label", text: "DIAGNOSI PLAYER" }), diagBtn, diagOut
     ));
   }
 

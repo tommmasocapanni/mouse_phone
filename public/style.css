@@ -411,6 +411,77 @@ body {
 
 .cs-primary.cast-launch { margin-top: 10px; }
 
+/* --- now playing --- */
+.np-bar {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 12px 12px 14px;
+}
+.np-bar.idle { opacity: .55; }
+
+.np-row { display: flex; align-items: center; gap: 12px; }
+
+.np-play {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.np-play svg { width: 20px; }
+.np-play:active { transform: scale(.94); }
+
+.np-info { flex: 1; min-width: 0; }
+.np-title {
+  font-size: 11px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-time {
+  font-size: 9px;
+  letter-spacing: .08em;
+  color: var(--mid);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.np-track {
+  margin-top: 12px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+  cursor: pointer;
+}
+.np-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--ink);
+  border-radius: 999px;
+  transition: width .25s linear;
+}
+.np-bar.idle .np-track { pointer-events: none; }
+
+/* --- diagnosi player --- */
+.cs-diag {
+  margin-top: 10px;
+  font-size: 9px;
+  line-height: 1.6;
+  letter-spacing: .04em;
+  color: var(--mid);
+  word-break: break-word;
+}
+.cs-diag.ok { color: #1a8a4a; }
+.cs-diag.err { color: #c0392b; }
+
 /* --- griglia launcher (2 colonne, tile ≥ 56px) --- */
 .tile-grid {
   display: grid;

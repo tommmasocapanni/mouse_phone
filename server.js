@@ -259,7 +259,7 @@ function startHelper() {
           if (pending) {
             helperPending.delete(msg.id);
             if (msg.ok) pending.resolve(msg);
-            else pending.reject(new Error(msg.error || "errore helper"));
+            else pending.reject(new Error(msg.error || msg.result || "errore helper"));
           }
           continue;
         }
@@ -372,11 +372,45 @@ function publicSettings() {
   };
 }
 
+// --- controllo del player web tramite iniezione JS (helper execjs) ---
+const JS_MEDIA = "document.querySelector('video')||document.querySelector('audio')";
+const JS_NOWPLAYING =
+  "(function(){try{var v=" + JS_MEDIA + ";if(!v)return '{\"found\":false}';" +
+  "var t=String(document.title||'').slice(0,180);" +
+  "var cur=isFinite(v.currentTime)?v.currentTime:0;" +
+  "var dur=isFinite(v.duration)?v.duration:0;" +
+  "return JSON.stringify({found:true,title:t,current:cur,duration:dur,paused:!!v.paused,rate:v.playbackRate||1,url:String(location.href||'').slice(0,200)});" +
+  "}catch(e){return JSON.stringify({found:false,error:String(e)});}})()";
+
+function jsPlayer(action, seconds) {
+  const find = "var v=" + JS_MEDIA + ";if(!v)return '0';";
+  if (action === "seek")
+    return "(function(){" + find + "v.currentTime=" + (Number(seconds) || 0) + ";return '1';})()";
+  if (action === "play")
+    return "(function(){" + find + "var p=v.play();if(p&&p.catch)p.catch(function(){});return '1';})()";
+  if (action === "pause")
+    return "(function(){" + find + "v.pause();return '1';})()";
+  return "(function(){" + find + "if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}else{v.pause();}return '1';})()";
+}
+
+async function runBrowserJS(js) {
+  if (settings.browser === "default") {
+    return { ok: false, reason: "no-browser", error: "seleziona un browser specifico (Safari/Chrome/Arc) nelle impostazioni" };
+  }
+  try {
+    const rep = await helperCall({ cmd: "execjs", browser: settings.browser, js }, 6000);
+    return { ok: true, result: String(rep.result == null ? "" : rep.result) };
+  } catch (e) {
+    const msg = String(e.message || "errore");
+    const noPerm = /javascript|apple\s?events|non .*consentito|not allowed|privilege|non è consentito/i.test(msg);
+    return { ok: false, reason: noPerm ? "permission" : "error", error: msg };
+  }
+}
+
 const VIDEO_EXT = new Set([
   ".mp4", ".mkv", ".mov", ".m4v", ".avi", ".webm", ".flv",
   ".wmv", ".mpg", ".mpeg", ".ts", ".m2ts", ".ogv",
 ]);
-
 // GET /api/files?path= — esplorazione della cartella film, confinata alla root.
 function listFiles(url, res) {
   const root = path.resolve(settings.moviesRoot);
@@ -576,6 +610,42 @@ async function handleApi(req, res, url) {
         fullscreen: true,
       });
       return jsonResponse(res, 200, { ok: true, mode: "open" });
+    }
+    if (p === "/api/nowplaying" && method === "GET") {
+      const r = await runBrowserJS(JS_NOWPLAYING);
+      if (!r.ok) {
+        return jsonResponse(res, 200, { found: false, reason: r.reason, error: r.error, browser: settings.browser });
+      }
+      let data;
+      const raw = String(r.result || "").trim();
+      if (!raw) {
+        data = { found: false, reason: "no-window" };
+      } else {
+        try {
+          data = JSON.parse(raw);
+        } catch (_) {
+          const noPerm = /not allowed|consentito|privilege/i.test(raw);
+          data = { found: false, reason: noPerm ? "permission" : "parse", error: raw };
+        }
+      }
+      data.browser = settings.browser;
+      return jsonResponse(res, 200, data);
+    }
+    if (p === "/api/player" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const action = ["play", "pause", "toggle"].includes(b.action) ? b.action : "toggle";
+      const r = await runBrowserJS(jsPlayer(action));
+      if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
+      return jsonResponse(res, 200, { ok: true, action, hit: r.result === "1" });
+    }
+    if (p === "/api/seek" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      let sec = Number(b.seconds);
+      if (!isFinite(sec) || sec < 0) return jsonResponse(res, 400, { error: "seconds non valido" });
+      sec = Math.min(sec, 12 * 3600);
+      const r = await runBrowserJS(jsPlayer("seek", sec));
+      if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
+      return jsonResponse(res, 200, { ok: true, hit: r.result === "1" });
     }
     if (p === "/api/files" && method === "GET") {
       return listFiles(url, res);

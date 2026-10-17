@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v24";
+  const BUILD = "v25";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -1089,6 +1089,7 @@
     cinema.classList.toggle("open", open);
     cinema.setAttribute("aria-hidden", open ? "false" : "true");
     hapticTick();
+    document.dispatchEvent(new CustomEvent("dot:cinema", { detail: { open } }));
   }
 
   dashBtn.addEventListener("click", () => setCinema(true));
