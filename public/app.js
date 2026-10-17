@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v19";
+  const BUILD = "v20";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -362,6 +362,7 @@
     }
   })();
   let audioCtx = null;
+  let progSwitch = null;
 
   function audioTick() {
     try {
@@ -378,8 +379,34 @@
     } catch (_) {}
   }
 
+  // switch nascosto su body: consente a hapticTick() di far vibrare a comando
+  // (long-press, bordo schermo, media, chip...). Attivo fino a iOS ~26.4: dalla
+  // 26.5 Apple ha bloccato il trigger via codice, quindi lì resta silenzioso.
+  if (hapticOK) {
+    try {
+      const label = document.createElement("label");
+      label.setAttribute("aria-hidden", "true");
+      Object.assign(label.style, {
+        position: "fixed", left: "-9999px", top: "0",
+        width: "1px", height: "1px", overflow: "hidden", pointerEvents: "none",
+      });
+      const sw = document.createElement("input");
+      sw.type = "checkbox";
+      sw.setAttribute("switch", "");
+      sw.tabIndex = -1;
+      Object.assign(sw.style, { width: "1px", height: "1px", margin: "0" });
+      sw.addEventListener("click", (e) => e.stopPropagation());
+      label.append(sw);
+      document.body.append(label);
+      progSwitch = { label, sw };
+    } catch (_) {}
+  }
+
   function hapticTick() {
-    if (hapticOK) return;
+    if (progSwitch) {
+      try { progSwitch.label.click(); } catch (_) {}
+      return;
+    }
     if (navigator.vibrate) navigator.vibrate(8);
     else audioTick();
   }
@@ -505,7 +532,7 @@
       pad.classList.remove("edgeflash");
       void pad.offsetWidth;
       pad.classList.add("edgeflash");
-      audioTick();
+      hapticTick();
     }
     edgeX = ex;
     edgeY = ey;

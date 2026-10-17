@@ -63,6 +63,12 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 > Lo **shake** usa l'accelerometro (`DeviceMotion`): al primo tocco la web app
 > chiede il permesso "Movimento e orientamento". Scuotendo l'iPhone compare un
 > alert **ANNULLA / CONFERMA**; confermando viene inviato **⌘W** al Mac.
+>
+> **Haptics**: il "tick" del Taptic Engine usa il controllo nativo
+> `<input type="checkbox" switch>` (Safari 17.4+). Le label trasparenti sopra
+> pad e CALIBRA danno il tick al tap; uno switch nascosto fa vibrare a comando su
+> long-press, bordo schermo, media e chip (attivo fino a iOS ~26.4). Da iOS 26.5
+> Apple ha bloccato il trigger via codice: lì il tick arriva solo al tap diretto.
 
 ## Struttura
 
