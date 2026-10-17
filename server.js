@@ -95,6 +95,13 @@ if (!Array.isArray(bookmarks)) {
   writeJson("bookmarks.json", bookmarks);
 }
 
+// coda di link (usata da /api/cast mode=queue e dalla view Cinema nello step 6)
+let queue = readJson("queue.json", null);
+if (!Array.isArray(queue)) {
+  queue = [];
+  writeJson("queue.json", queue);
+}
+
 // browser rilevati sul Mac. "default" apre con il browser di sistema di macOS.
 function installedBrowsers() {
   const candidates = [
@@ -550,6 +557,25 @@ async function handleApi(req, res, url) {
         fullscreen: true,
       });
       return jsonResponse(res, 200, { ok: true });
+    }
+    if (p === "/api/cast" && method === "POST") {
+      const b = JSON.parse((await readBody(req)) || "{}");
+      const clean = safeUrl(b.url);
+      if (!clean) return jsonResponse(res, 400, { error: "url non valido (http/https)" });
+      if (b.mode === "queue") {
+        queue.push({ id: "q_" + crypto.randomBytes(4).toString("hex"), url: clean, title: null, addedAt: Date.now() });
+        writeJson("queue.json", queue);
+        broadcast({ type: "queue", queue });
+        return jsonResponse(res, 200, { ok: true, mode: "queue" });
+      }
+      await helperCall({
+        cmd: "openurl",
+        url: clean,
+        browser: settings.browser,
+        displayIndex: settings.displayIndex,
+        fullscreen: true,
+      });
+      return jsonResponse(res, 200, { ok: true, mode: "open" });
     }
     if (p === "/api/files" && method === "GET") {
       return listFiles(url, res);

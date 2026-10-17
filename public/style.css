@@ -362,6 +362,55 @@ body {
 }
 .cine-bar-caret { color: var(--mid); font-size: 16px; }
 
+/* --- invia link --- */
+.castmodal {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: calc(86px + env(safe-area-inset-top)) 22px 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+.castmodal.open { opacity: 1; pointer-events: auto; }
+
+.castmodal-card {
+  width: 100%;
+  max-width: 340px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 18px 50px var(--shadow);
+  padding: 14px;
+  transform: translateY(-10px) scale(.97);
+  transition: transform .2s cubic-bezier(.2, .8, .2, 1);
+}
+.castmodal.open .castmodal-card { transform: translateY(0) scale(1); }
+
+.cast-row { display: flex; gap: 8px; }
+.cast-input { flex: 1; min-width: 0; }
+
+.cast-paste {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.cast-paste svg { width: 18px; }
+.cast-paste:active { background: var(--surface-2); }
+
+.cs-primary.cast-launch { margin-top: 10px; }
+
 /* --- griglia launcher (2 colonne, tile ≥ 56px) --- */
 .tile-grid {
   display: grid;

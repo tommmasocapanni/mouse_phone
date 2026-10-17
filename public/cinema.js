@@ -9,6 +9,9 @@
   const sheetEl = document.getElementById("cineSheet");
   const cardEl = document.getElementById("cineSheetCard");
   const settingsBtn = document.getElementById("cineSettings");
+  const castBtn = document.getElementById("cineCast");
+  const castModalEl = document.getElementById("castModal");
+  const castModalCard = document.getElementById("castModalCard");
 
   const token = dot.token();
   const state = {
@@ -92,6 +95,8 @@
     sheetIsOpen = false;
   }
   sheetEl.addEventListener("click", (e) => { if (e.target === sheetEl) closeSheet(); });
+  castModalEl.addEventListener("click", (e) => { if (e.target === castModalEl) closeCastModal(); });
+  castBtn.addEventListener("click", openCastModal);
 
   function sheetHead(title, onBack) {
     return h("div", { class: "cs-head" },
@@ -115,6 +120,62 @@
     for (const bm of state.bookmarks) grid.append(bookmarkTile(bm));
     grid.append(addTile());
     return h("section", { class: "cine-sec" }, head, displayBar(), grid);
+  }
+
+  function castSvg() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' +
+      '<rect x="8" y="2" width="8" height="4" rx="1"/>' +
+      '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>';
+  }
+
+  function openCastModal() {
+    if (!ensureOnline()) return;
+    dot.haptic();
+    const card = castModalCard;
+    card.textContent = "";
+
+    const input = h("input", {
+      class: "cs-input cast-input", type: "url", placeholder: "incolla o scrivi un link…",
+      autocapitalize: "off", autocorrect: "off", spellcheck: "false", enterkeyhint: "go",
+    });
+    const pasteBtn = h("button", {
+      class: "cast-paste", type: "button", "aria-label": "Incolla dagli appunti", html: castSvg(),
+      onclick: async () => {
+        try {
+          const t = await navigator.clipboard.readText();
+          if (t && t.trim()) { input.value = t.trim(); input.focus(); }
+          else dot.toast("APPUNTI VUOTI");
+        } catch (_) { dot.toast("INCOLLA MANUALMENTE (PERMESSO APPUNTI)"); }
+      },
+    });
+
+    const launch = async () => {
+      if (!ensureOnline()) return;
+      const url = input.value.trim();
+      if (!/^https?:\/\//i.test(url)) { dot.toast("URL NON VALIDO (http/https)"); return; }
+      dot.haptic();
+      try {
+        await api("/api/cast", { method: "POST", body: { url, mode: "open" } });
+        dot.toast("LANCIATO SUL MAC");
+        closeCastModal();
+      } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
+    };
+
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); launch(); } });
+
+    card.append(
+      h("div", { class: "cast-row" }, input, pasteBtn),
+      h("button", { class: "cs-primary cast-launch", type: "button", text: "LANCIA", onclick: launch })
+    );
+
+    castModalEl.classList.add("open");
+    castModalEl.setAttribute("aria-hidden", "false");
+    setTimeout(() => input.focus(), 80);
+  }
+
+  function closeCastModal() {
+    castModalEl.classList.remove("open");
+    castModalEl.setAttribute("aria-hidden", "true");
   }
 
   function displayBar() {

@@ -12,9 +12,15 @@
     "icon": "N"
   },
   {
-    "id": "plex",
-    "name": "Plex",
-    "url": "https://app.plex.tv",
-    "icon": "P"
+    "id": "bm_bc011adb",
+    "name": "Prime Video",
+    "url": "https://www.primevideo.com/",
+    "icon": "AMZP"
+  },
+  {
+    "id": "bm_347ebb70",
+    "name": "Streaming Community",
+    "url": "https://streamingcommunityz.shiksha/",
+    "icon": "StrC"
   }
 ]
