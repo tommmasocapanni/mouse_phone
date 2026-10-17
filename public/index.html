@@ -13,7 +13,7 @@
   <title>dot. / Remote Trackpad</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="apple-touch-icon" href="icon.png">
-  <link rel="stylesheet" href="style.css?v=56">
+  <link rel="stylesheet" href="style.css?v=63">
 </head>
 <body>
 <main class="phone">
@@ -164,6 +164,15 @@
       <div class="np-queue-list" id="npQueueList"></div>
     </div>
     <div class="np-full-spacer"></div>
+    <div class="np-full-toggles">
+      <button class="np-toggle" id="npFullAuto" type="button" aria-label="Riproduzione automatica della coda" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+      </button>
+      <button class="np-toggle np-toggle-skip" id="npFullSkip" type="button" aria-label="Salta annunci in automatico" aria-pressed="false">
+        <span>SKIP</span>
+        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M4 5v14l8-7z"/><path d="M13 5v14l8-7z"/></svg>
+      </button>
+    </div>
     <div class="np-full-scrub" id="npScrub">
       <div class="np-seek-bubble" id="npSeekBubble">0:00</div>
       <div class="np-full-track" id="npFullTrack">
@@ -185,14 +194,6 @@
       </button>
       <button class="np-seek" id="npFwd" type="button" aria-label="Avanti 5 secondi">
         <span class="np-seek-ico flip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1"/><path d="M3 4.5V9h4.5"/></svg><b>5</b></span>
-      </button>
-    </div>
-    <div class="np-full-toggles">
-      <button class="np-toggle" id="npFullSkip" type="button" aria-label="Salta annunci in automatico">
-        <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M4 5v14l8-7z"/><path d="M13 5v14l8-7z"/></svg>
-      </button>
-      <button class="np-toggle" id="npFullAuto" type="button" aria-label="Riproduzione automatica della coda">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
       </button>
     </div>
     <div class="nq-menu" id="nqMenu" hidden>
@@ -274,6 +275,6 @@
 </main>
 <script>window.__DOT_TOKEN__ = "__PAIR_TOKEN__";</script>
 <script src="app.js?v=42"></script>
-<script src="cinema.js?v=45"></script>
+<script src="cinema.js?v=46"></script>
 </body>
 </html>

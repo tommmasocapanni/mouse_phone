@@ -265,8 +265,14 @@
   const npFullNext = document.getElementById("npFullNext");
   const npFullSkip = document.getElementById("npFullSkip");
   const npFullAuto = document.getElementById("npFullAuto");
-  if (npFullSkip) npFullSkip.classList.toggle("active", np.auto);
-  if (npFullAuto) npFullAuto.classList.toggle("active", np.next);
+  if (npFullSkip) {
+    npFullSkip.classList.toggle("active", np.auto);
+    npFullSkip.setAttribute("aria-pressed", String(np.auto));
+  }
+  if (npFullAuto) {
+    npFullAuto.classList.toggle("active", np.next);
+    npFullAuto.setAttribute("aria-pressed", String(np.next));
+  }
 
   function fmtTime(s) {
     s = Math.max(0, Math.floor(Number(s) || 0));
@@ -1171,7 +1177,10 @@
     if (skipLongFired) { skipLongFired = false; return; } // era una pressione lunga (salta ora): niente toggle
     dot.haptic();
     np.auto = !np.auto;
-    if (npFullSkip) npFullSkip.classList.toggle("active", np.auto);
+    if (npFullSkip) {
+      npFullSkip.classList.toggle("active", np.auto);
+      npFullSkip.setAttribute("aria-pressed", String(np.auto));
+    }
     try { localStorage.setItem("dot_autoskip", np.auto ? "1" : "0"); } catch (_) {}
     dot.toast(np.auto ? "SALTA ANNUNCI ON" : "SALTA ANNUNCI OFF");
     if (np.auto) pollNp();
@@ -1180,7 +1189,10 @@
   function npToggleAuto() {
     dot.haptic();
     np.next = !np.next;
-    if (npFullAuto) npFullAuto.classList.toggle("active", np.next);
+    if (npFullAuto) {
+      npFullAuto.classList.toggle("active", np.next);
+      npFullAuto.setAttribute("aria-pressed", String(np.next));
+    }
     try { localStorage.setItem("dot_autoplay", np.next ? "1" : "0"); } catch (_) {}
     dot.toast(np.next ? "AUTOPLAY ON" : "AUTOPLAY OFF");
   }
@@ -1567,7 +1579,10 @@
       renderCoverflow();
       if (msg.autoplay && msg.queue.length) {
         np.next = true;
-        if (npFullAuto) npFullAuto.classList.add("active");
+        if (npFullAuto) {
+          npFullAuto.classList.add("active");
+          npFullAuto.setAttribute("aria-pressed", "true");
+        }
         dot.toast("PLAYLIST IN CODA · AUTOPLAY ON");
       }
     } else if (msg.type === "nowplaying") {
