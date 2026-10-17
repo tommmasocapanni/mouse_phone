@@ -102,10 +102,10 @@ if (!Array.isArray(queue)) {
   writeJson("queue.json", queue);
 }
 
-// stato di navigazione del player: traccia cosa è in riproduzione e la cronologia,
-// così i comandi precedente/successivo hanno un senso (non persistito: al riavvio
-// del server si riparte da una coda pulita di riferimenti).
-let playNav = { current: null, history: [] };
+// stato di navigazione del player: la coda è la playlist ordinata, "index" indica
+// quale elemento è in riproduzione (-1 = niente della coda / elemento esterno).
+// Non persistito: al riavvio del server si riparte pulito.
+let playNav = { current: null, index: -1 };
 
 // apre un link della coda nel browser configurato, riusando la tab attiva così
 // il video precedente non resta in riproduzione dietro a quello nuovo
@@ -118,6 +118,18 @@ async function openQueueItem(item) {
     fullscreen: true,
     reuseTab: true,
   });
+}
+
+// sposta il cursore della coda sull'elemento i e lo apre nel browser
+async function playQueueAt(i) {
+  const item = queue[i];
+  if (!item) return null;
+  playNav.index = i;
+  playNav.current = item;
+  writeJson("queue.json", queue);
+  broadcast({ type: "queue", queue, index: i });
+  await openQueueItem(item);
+  return item;
 }
 
 // browser rilevati sul Mac. "default" apre con il browser di sistema di macOS.
@@ -380,6 +392,145 @@ function safeUrl(raw) {
   }
 }
 
+// --- YouTube: riconosce i video e importa le playlist nella coda ---
+function youTubeInfo(raw) {
+  let u;
+  try { u = new URL(String(raw || "").trim()); } catch (_) { return null; }
+  const host = u.hostname.toLowerCase().replace(/^www\./, "").replace(/^m\./, "");
+  if (host !== "youtube.com" && host !== "youtu.be" && host !== "music.youtube.com") return null;
+  let videoId = u.searchParams.get("v") || "";
+  if (!videoId && host === "youtu.be") videoId = u.pathname.replace(/^\/+/, "").split("/")[0];
+  if (!videoId) {
+    const m = u.pathname.match(/^\/(?:shorts|embed|live|v)\/([A-Za-z0-9_-]{11})/);
+    if (m) videoId = m[1];
+  }
+  if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) videoId = "";
+  return { videoId, listId: u.searchParams.get("list") || "" };
+}
+
+function youTubeSingleUrl(videoId) {
+  return "https://www.youtube.com/watch?v=" + videoId;
+}
+
+function decodeEntities(s) {
+  return String(s || "")
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+
+const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15";
+
+function httpsGet(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers: { "User-Agent": UA, "Accept-Language": "en-US,en;q=0.9" } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        return httpsGet(new URL(res.headers.location, url).toString(), timeoutMs).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error("HTTP " + res.statusCode)); }
+      let data = "";
+      res.setEncoding("utf8");
+      res.on("data", (c) => { data += c; if (data.length > 8 * 1024 * 1024) req.destroy(new Error("troppo grande")); });
+      res.on("end", () => resolve(data));
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs || 12000, () => req.destroy(new Error("timeout")));
+  });
+}
+
+// nuova UI YouTube: blocchi "lockupViewModel" con titolo + contentId (= videoId)
+function parsePlaylistHtml(html) {
+  const out = [];
+  const seen = new Set();
+  const parts = html.split('"lockupViewModel":{');
+  for (let k = 1; k < parts.length; k++) {
+    const block = parts[k];
+    const t = block.match(/"lockupMetadataViewModel":\{"title":\{"content":"((?:[^"\\]|\\.)*)"/);
+    const c = block.match(/"contentId":"([A-Za-z0-9_-]{11})"/);
+    if (t && c && !seen.has(c[1])) {
+      seen.add(c[1]);
+      out.push({ videoId: c[1], title: decodeEntities(t[1]) });
+    }
+  }
+  return out;
+}
+
+function parsePlaylistRss(xml) {
+  const out = [];
+  for (const e of String(xml).split("<entry>").slice(1)) {
+    const v = e.match(/<yt:videoId>([^<]+)<\/yt:videoId>/);
+    const t = e.match(/<title>([^<]*)<\/title>/);
+    if (v && /^[A-Za-z0-9_-]{11}$/.test(v[1])) out.push({ videoId: v[1], title: decodeEntities(t ? t[1] : "") });
+  }
+  return out;
+}
+
+// elenco video di una playlist: prima la pagina (fino a 100 in ordine), poi il feed RSS (~15).
+async function fetchYouTubePlaylist(listId) {
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(listId)) return [];
+  try {
+    const html = await httpsGet("https://www.youtube.com/playlist?list=" + encodeURIComponent(listId) + "&hl=en");
+    const items = parsePlaylistHtml(html);
+    if (items.length) return items.slice(0, 100);
+  } catch (_) {}
+  try {
+    const xml = await httpsGet("https://www.youtube.com/feeds/videos.xml?playlist_id=" + encodeURIComponent(listId));
+    return parsePlaylistRss(xml).slice(0, 100);
+  } catch (_) {}
+  return [];
+}
+
+function newQueueItem(url, title) {
+  return { id: "q_" + crypto.randomBytes(4).toString("hex"), url, title: title || null, addedAt: Date.now() };
+}
+
+// la playlist diventa la nostra coda: i video successivi a quello in riproduzione
+// la playlist diventa la nostra coda: TUTTI i video finiscono nell'elenco e
+// "index" punta al video che sta suonando (o -1 se non è nella playlist).
+function applyPlaylistItems(items, currentVideoId) {
+  let idx = -1;
+  queue = items.map((x, i) => {
+    if (currentVideoId && x.videoId === currentVideoId) idx = i;
+    return newQueueItem(youTubeSingleUrl(x.videoId), x.title);
+  });
+  playNav.index = idx;
+  if (idx >= 0) playNav.current = queue[idx];
+  writeJson("queue.json", queue);
+  broadcast({ type: "queue", queue, index: playNav.index, autoplay: queue.length > 1 });
+  console.log(`playlist: ${queue.length} video in coda (indice ${playNav.index})`);
+}
+
+// apre un URL: se è una playlist YouTube la scarica, apre il singolo video scelto
+// (quello indicato o il primo) e mette l'intera playlist nella coda.
+async function openUrlSmart(clean, reuseTab) {
+  const info = youTubeInfo(clean);
+  const base = { cmd: "openurl", browser: settings.browser, displayIndex: settings.displayIndex, fullscreen: true };
+  if (reuseTab) base.reuseTab = true;
+  let target = clean;
+  let items = null;
+  let idx = -1;
+  if (info && info.listId) {
+    items = await fetchYouTubePlaylist(info.listId).catch(() => []);
+    if (items && items.length) {
+      idx = info.videoId ? items.findIndex((x) => x.videoId === info.videoId) : 0;
+      if (idx < 0) idx = 0;
+      target = youTubeSingleUrl(items[idx].videoId);
+    } else if (info.videoId) {
+      target = youTubeSingleUrl(info.videoId);
+      items = null;
+    }
+  } else if (info && info.videoId) {
+    target = youTubeSingleUrl(info.videoId);
+  }
+  base.url = target;
+  await helperCall(base);
+  playNav.index = -1;
+  playNav.current = { id: null, url: target, title: null };
+  if (items && items.length) applyPlaylistItems(items, idx >= 0 ? items[idx].videoId : "");
+}
+
 function publicSettings() {
   return {
     browser: settings.browser,
@@ -627,13 +778,7 @@ async function handleApi(req, res, url) {
       const b = JSON.parse((await readBody(req)) || "{}");
       const clean = safeUrl(b.url);
       if (!clean) return jsonResponse(res, 400, { error: "url non valido (http/https)" });
-      await helperCall({
-        cmd: "openurl",
-        url: clean,
-        browser: settings.browser,
-        displayIndex: settings.displayIndex,
-        fullscreen: true,
-      });
+      await openUrlSmart(clean, false);
       return jsonResponse(res, 200, { ok: true });
     }
     if (p === "/api/cast" && method === "POST") {
@@ -641,34 +786,35 @@ async function handleApi(req, res, url) {
       const clean = safeUrl(b.url);
       if (!clean) return jsonResponse(res, 400, { error: "url non valido (http/https)" });
       if (b.mode === "queue") {
-        queue.push({ id: "q_" + crypto.randomBytes(4).toString("hex"), url: clean, title: null, addedAt: Date.now() });
+        // una playlist diventa tanti elementi singoli in coda (non un solo link)
+        const info = youTubeInfo(clean);
+        let added = 0;
+        if (info && info.listId) {
+          const items = await fetchYouTubePlaylist(info.listId).catch(() => []);
+          for (const it of items) { queue.push(newQueueItem(youTubeSingleUrl(it.videoId), it.title)); added++; }
+        }
+        if (!added) { queue.push(newQueueItem(clean, null)); added = 1; }
         writeJson("queue.json", queue);
-        broadcast({ type: "queue", queue });
-        return jsonResponse(res, 200, { ok: true, mode: "queue" });
+        broadcast({ type: "queue", queue, index: playNav.index });
+        return jsonResponse(res, 200, { ok: true, mode: "queue", added });
       }
-      await helperCall({
-        cmd: "openurl",
-        url: clean,
-        browser: settings.browser,
-        displayIndex: settings.displayIndex,
-        fullscreen: true,
-      });
-      if (playNav.current) playNav.history.push(playNav.current);
-      playNav.current = { id: null, url: clean, title: null };
+      await openUrlSmart(clean, false);
       return jsonResponse(res, 200, { ok: true, mode: "open" });
     }
     if (p === "/api/queue" && method === "GET") {
-      return jsonResponse(res, 200, { queue });
+      return jsonResponse(res, 200, { queue, index: playNav.index });
     }
     if (p === "/api/queue/remove" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
       const id = String(b.id || "");
-      const before = queue.length;
-      queue = queue.filter((q) => q.id !== id);
-      if (queue.length === before) return jsonResponse(res, 404, { error: "elemento non trovato" });
+      const i = queue.findIndex((q) => q.id === id);
+      if (i < 0) return jsonResponse(res, 404, { error: "elemento non trovato" });
+      queue.splice(i, 1);
+      if (playNav.index === i) playNav.index = -1;
+      else if (playNav.index > i) playNav.index--;
       writeJson("queue.json", queue);
-      broadcast({ type: "queue", queue });
-      return jsonResponse(res, 200, { ok: true, queue });
+      broadcast({ type: "queue", queue, index: playNav.index });
+      return jsonResponse(res, 200, { ok: true, queue, index: playNav.index });
     }
     if (p === "/api/queue/move" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
@@ -681,43 +827,32 @@ async function handleApi(req, res, url) {
         const tmp = queue[i];
         queue[i] = queue[j];
         queue[j] = tmp;
+        if (playNav.index === i) playNav.index = j;
+        else if (playNav.index === j) playNav.index = i;
         writeJson("queue.json", queue);
-        broadcast({ type: "queue", queue });
+        broadcast({ type: "queue", queue, index: playNav.index });
       }
-      return jsonResponse(res, 200, { ok: true, queue });
+      return jsonResponse(res, 200, { ok: true, queue, index: playNav.index });
     }
     if (p === "/api/queue/next" && method === "POST") {
-      const item = queue.shift();
-      if (!item) return jsonResponse(res, 404, { error: "coda vuota" });
-      if (playNav.current) playNav.history.push(playNav.current);
-      playNav.current = item;
-      writeJson("queue.json", queue);
-      broadcast({ type: "queue", queue });
-      await openQueueItem(item);
-      return jsonResponse(res, 200, { ok: true, opened: item, queue });
+      const i = playNav.index >= 0 ? playNav.index + 1 : 0;
+      const item = await playQueueAt(i);
+      if (!item) return jsonResponse(res, 404, { error: playNav.index >= 0 ? "fine coda" : "coda vuota" });
+      return jsonResponse(res, 200, { ok: true, opened: item, queue, index: playNav.index });
     }
     if (p === "/api/queue/prev" && method === "POST") {
-      const item = playNav.history.pop();
+      if (playNav.index <= 0) return jsonResponse(res, 404, { error: "nessun precedente" });
+      const item = await playQueueAt(playNav.index - 1);
       if (!item) return jsonResponse(res, 404, { error: "nessun precedente" });
-      if (playNav.current) queue.unshift(playNav.current);
-      playNav.current = item;
-      writeJson("queue.json", queue);
-      broadcast({ type: "queue", queue });
-      await openQueueItem(item);
-      return jsonResponse(res, 200, { ok: true, opened: item, queue });
+      return jsonResponse(res, 200, { ok: true, opened: item, queue, index: playNav.index });
     }
     if (p === "/api/queue/play" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
       const id = String(b.id || "");
       const i = queue.findIndex((q) => q.id === id);
       if (i < 0) return jsonResponse(res, 404, { error: "elemento non trovato" });
-      const item = queue.splice(i, 1)[0];
-      if (playNav.current) playNav.history.push(playNav.current);
-      playNav.current = item;
-      writeJson("queue.json", queue);
-      broadcast({ type: "queue", queue });
-      await openQueueItem(item);
-      return jsonResponse(res, 200, { ok: true, opened: item, queue });
+      const item = await playQueueAt(i);
+      return jsonResponse(res, 200, { ok: true, opened: item, queue, index: playNav.index });
     }
     if (p === "/api/nowplaying" && method === "GET") {
       const r = await runBrowserJS(JS_NOWPLAYING);

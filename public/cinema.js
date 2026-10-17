@@ -172,8 +172,13 @@
       if (!/^https?:\/\//i.test(url)) { dot.toast("URL NON VALIDO (http/https)"); return; }
       dot.haptic();
       try {
-        await api("/api/cast", { method: "POST", body: { url, mode } });
-        dot.toast(mode === "queue" ? "AGGIUNTO ALLA CODA" : "LANCIATO SUL MAC");
+        const r = await api("/api/cast", { method: "POST", body: { url, mode } });
+        if (mode === "queue") {
+          const n = r && r.added ? r.added : 1;
+          dot.toast(n > 1 ? n + " VIDEO AGGIUNTI ALLA CODA" : "AGGIUNTO ALLA CODA");
+        } else {
+          dot.toast("LANCIATO SUL MAC");
+        }
         closeCastModal();
       } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
     };
@@ -201,7 +206,14 @@
   // ---------- now playing (mini-player + schermata a tutto schermo) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false };
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0 };
+
+  // avvia una transizione tra brani: mantiene viva la UI finché il nuovo video
+  // non è pronto (evita che il player "sparisca e ricompaia")
+  function beginNav() {
+    np.pendingNav = true;
+    np.navUntil = Date.now() + 8000;
+  }
   try { np.auto = localStorage.getItem("dot_autoskip") === "1"; } catch (_) {}
   try { np.next = localStorage.getItem("dot_autoplay") === "1"; } catch (_) {}
 
@@ -210,6 +222,14 @@
   const npMiniTitle = document.getElementById("npMiniTitle");
   const npMiniSub = document.getElementById("npMiniSub");
   const npMiniPlay = document.getElementById("npMiniPlay");
+  const homeMini = document.getElementById("homeMini");
+  const homeMiniArt = document.getElementById("homeMiniArt");
+  const homeMiniTitle = document.getElementById("homeMiniTitle");
+  const homeMiniSub = document.getElementById("homeMiniSub");
+  const homeMiniPlay = document.getElementById("homeMiniPlay");
+  const homeMiniPrev = document.getElementById("homeMiniPrev");
+  const homeMiniNext = document.getElementById("homeMiniNext");
+  const footnote = document.getElementById("footnote");
   const npFull = document.getElementById("npFull");
   const npFullDown = document.getElementById("npFullDown");
   const npFullAudio = document.getElementById("npFullAudio");
@@ -251,6 +271,37 @@
     const svgMarkup = paused ? NP_PLAY_SVG : NP_PAUSE_SVG;
     if (npMiniPlay) npMiniPlay.innerHTML = svgMarkup;
     if (npFullPlay) npFullPlay.innerHTML = svgMarkup;
+    if (homeMiniPlay) homeMiniPlay.innerHTML = svgMarkup;
+  }
+
+  // mini-player nella schermata principale: appare al posto del promemoria 01/INPUT
+  function showHomeMini(on) {
+    if (homeMini) homeMini.hidden = !on;
+    if (footnote) footnote.hidden = on;
+  }
+
+  // titolo del mini-player home: scorre se non entra nella larghezza
+  let miniTitleText = null;
+  function setMiniTitle(text) {
+    if (!homeMiniTitle) return;
+    const label = text || "MEDIA";
+    if (label === miniTitleText) return;
+    miniTitleText = label;
+    homeMiniTitle.classList.remove("scroll");
+    homeMiniTitle.style.removeProperty("--hm-dur");
+    homeMiniTitle.textContent = label;
+    requestAnimationFrame(() => {
+      const need = homeMiniTitle.scrollWidth;
+      const have = homeMiniTitle.clientWidth;
+      if (need > have + 2) {
+        homeMiniTitle.textContent = "";
+        const track = h("div", { class: "hm-track" });
+        track.append(h("span", { text: label }), h("span", { text: label }));
+        homeMiniTitle.append(track);
+        homeMiniTitle.style.setProperty("--hm-dur", Math.max(6, need / 22) + "s");
+        homeMiniTitle.classList.add("scroll");
+      }
+    });
   }
 
   function setArt(el, art, site) {
@@ -263,10 +314,13 @@
   function openNpFull() {
     if (np.mode !== "media") return;
     dot.haptic();
+    np.fullOpen = true;
     npFull.classList.add("show");
     npFull.setAttribute("aria-hidden", "false");
+    pollNp();
   }
   function closeNpFull() {
+    np.fullOpen = false;
     npFull.classList.remove("show");
     npFull.setAttribute("aria-hidden", "true");
     closeVol();
@@ -340,6 +394,7 @@
   const npQueueList = document.getElementById("npQueueList");
   const nqMenu = document.getElementById("nqMenu");
   let queueItems = [];
+  let queueIndex = -1;
 
   function hostOf(url) {
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
@@ -362,7 +417,8 @@
       npQueueList.append(h("div", { class: "nq-empty", text: "CODA VUOTA · AGGIUNGI LINK CON ⇱" }));
       return;
     }
-    for (const it of queueItems) {
+    for (let n = 0; n < queueItems.length; n++) {
+      const it = queueItems[n];
       const art = h("div", { class: "nq-art" });
       setFavicon(art, it.url);
       const host = hostOf(it.url);
@@ -370,7 +426,7 @@
       const sub = it.title ? host : "IN CODA";
       const more = h("button", { class: "nq-more", type: "button", text: "⋯", "aria-label": "Opzioni" });
       more.addEventListener("click", (e) => { e.stopPropagation(); openNqMenu(more, it.id); });
-      const item = h("div", { class: "nq-item" },
+      const item = h("div", { class: "nq-item" + (n === queueIndex ? " now" : "") },
         art,
         h("div", { class: "nq-text" }, h("div", { class: "nq-title", text: title }), h("div", { class: "nq-sub", text: sub })),
         more
@@ -384,6 +440,7 @@
     try {
       const r = await api("/api/queue", { method: "GET" });
       queueItems = (r && r.queue) || [];
+      queueIndex = r && typeof r.index === "number" ? r.index : -1;
       renderQueue();
     } catch (_) {}
   }
@@ -447,6 +504,7 @@
       npMiniTitle.textContent = d.reason === "no-browser" ? "SELEZIONA UN BROWSER SPECIFICO" : "ABILITA JS DA APPLE EVENTS";
       npMiniSub.textContent = "TOCCA PER LE IMPOSTAZIONI ⚙";
       npMiniPlay.style.visibility = "hidden";
+      showHomeMini(false);
       return;
     }
 
@@ -458,6 +516,7 @@
       closeNpFull();
       npMini.classList.remove("show");
       document.getElementById("cinema").classList.remove("has-np");
+      showHomeMini(false);
       return;
     }
 
@@ -473,6 +532,11 @@
     setArt(npMiniArt, d.art, d.site);
     npMiniTitle.textContent = d.title || "MEDIA";
     npMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) + (d.site ? " · " + d.site : "");
+
+    showHomeMini(true);
+    if (homeMiniArt) setArt(homeMiniArt, d.art, d.site);
+    setMiniTitle(d.title || "MEDIA");
+    if (homeMiniSub) homeMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) + (d.site ? " · " + d.site : "");
 
     setArt(npFullArt, d.art, d.site);
     npFullTitle.textContent = d.title || "MEDIA";
@@ -499,22 +563,29 @@
 
   async function pollNp() {
     if (!np.running || np.busy) return;
+    if (document.hidden || !dot.online()) return;
     np.busy = true;
     try { applyNp(await api("/api/nowplaying", { method: "GET" })); } catch (_) {}
     np.busy = false;
     if (np.auto && np.found) api("/api/skip", { method: "POST", body: {} }).catch(() => {});
   }
 
+  // polling adattivo sempre attivo: veloce in Cinema, lento in home (dove il
+  // mini-player deve comunque accorgersi se qualcosa è in riproduzione)
+  function npDelay() {
+    if (np.cinema || np.fullOpen) return 1500;
+    return np.found ? 4000 : 7000;
+  }
+  function npSchedule() {
+    if (!np.running) return;
+    clearTimeout(np.timer);
+    np.timer = setTimeout(async () => { await pollNp(); npSchedule(); }, npDelay());
+  }
   function startNp() {
     if (np.running) return;
     np.running = true;
     pollNp();
-    np.timer = setInterval(pollNp, 1500);
-  }
-  function stopNp() {
-    np.running = false;
-    if (np.timer) { clearInterval(np.timer); np.timer = null; }
-    closeNpFull();
+    npSchedule();
   }
 
   async function npToggle() {
@@ -642,19 +713,26 @@
     }
   }
 
-  async function npQueuePrev() {
+  // prec/succ: usa la coda dell'app se ha qualcosa, altrimenti il tasto media
+  // di sistema (funziona a prescindere dalla coda, come la modale in home)
+  async function npNav(dir) {
     if (!ensureOnline()) return;
     dot.haptic();
     try {
-      const r = await api("/api/queue/prev", { method: "POST", body: {} });
+      const r = await api("/api/queue/" + dir, { method: "POST", body: {} });
       if (r && r.opened) {
         np.url = r.opened.url || "";
         np.ending = false;
         np.pendingNav = true;
-        dot.toast("PRECEDENTE · " + hostOf(r.opened.url).toUpperCase());
+        dot.toast((dir === "next" ? "PROSSIMO · " : "PRECEDENTE · ") + hostOf(r.opened.url).toUpperCase());
         setTimeout(pollNp, 600);
+        return;
       }
-    } catch (e) { dot.toast("NESSUN PRECEDENTE"); }
+    } catch (_) {}
+    if (dot.media) {
+      dot.media(dir);
+      dot.toast(dir === "next" ? "PROSSIMO" : "PRECEDENTE");
+    }
   }
 
   async function playQueueItem(id) {
@@ -714,8 +792,12 @@
   npFwd.addEventListener("click", () => npSeekBy(5));
   npFullSkip.addEventListener("click", npToggleSkip);
   npFullAuto.addEventListener("click", npToggleAuto);
-  npFullPrev.addEventListener("click", npQueuePrev);
-  npFullNext.addEventListener("click", () => npQueueNext(false));
+  npFullPrev.addEventListener("click", () => npNav("prev"));
+  npFullNext.addEventListener("click", () => npNav("next"));
+  if (homeMiniPlay) homeMiniPlay.addEventListener("click", (e) => { e.stopPropagation(); npToggle(); });
+  if (homeMiniPrev) homeMiniPrev.addEventListener("click", (e) => { e.stopPropagation(); npNav("prev"); });
+  if (homeMiniNext) homeMiniNext.addEventListener("click", (e) => { e.stopPropagation(); npNav("next"); });
+  if (homeMini) homeMini.addEventListener("click", () => { if (np.mode === "media") openNpFull(); });
   npFullSkip.addEventListener("pointerdown", skipPressStart);
   npFullSkip.addEventListener("pointerup", skipPressEnd);
   npFullSkip.addEventListener("pointerleave", skipPressEnd);
@@ -731,8 +813,9 @@
   });
 
   document.addEventListener("dot:cinema", (e) => {
-    if (e.detail && e.detail.open) startNp();
-    else stopNp();
+    np.cinema = !!(e.detail && e.detail.open);
+    if (np.cinema) { startNp(); pollNp(); }
+    else { closeNpFull(); closeVol(); }
   });
 
   function displayBar() {
@@ -1063,9 +1146,16 @@
       state.displays = msg.displays;
     } else if (msg.type === "queue" && Array.isArray(msg.queue)) {
       queueItems = msg.queue;
+      queueIndex = typeof msg.index === "number" ? msg.index : -1;
       if (!npQueue.hidden) renderQueue();
+      if (msg.autoplay && msg.queue.length) {
+        np.next = true;
+        if (npFullAuto) npFullAuto.classList.add("active");
+        dot.toast("PLAYLIST IN CODA · AUTOPLAY ON");
+      }
     }
   });
 
   load();
+  startNp();
 })();

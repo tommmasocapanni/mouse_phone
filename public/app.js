@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v34";
+  const BUILD = "v38";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -1331,6 +1331,7 @@
     online: () => connected && powerOn,
     status: () => ({ connected, powerOn, gyroPaused, anchored }),
     token: () => window.__DOT_TOKEN__ || "",
+    media: (key) => send({ type: "media", key }),
     BUILD,
   };
   document.dispatchEvent(new Event("dot:ready"));

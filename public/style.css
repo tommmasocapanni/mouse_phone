@@ -496,7 +496,7 @@ body {
 .np-full {
   position: absolute;
   inset: 0;
-  z-index: 58;
+  z-index: 45;
   display: flex;
   flex-direction: column;
   padding: calc(16px + env(safe-area-inset-top)) 26px calc(26px + env(safe-area-inset-bottom));
@@ -682,6 +682,8 @@ body {
   gap: 12px;
   padding: 8px 4px;
 }
+.nq-item.now { background: var(--surface-2); border-radius: 10px; }
+.nq-item.now .nq-title { color: var(--accent); }
 .nq-art {
   width: 44px;
   height: 44px;
@@ -1268,11 +1270,80 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   margin-top: 26px;
 }
 
 .footnote { font-size: 9px; color: var(--mid); line-height: 1.8; }
 .footnote strong { color: var(--ink); font-size: 10px; }
+
+.home-mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px 7px 7px;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 8px 22px var(--shadow);
+  cursor: pointer;
+}
+.home-mini[hidden] { display: none; }
+.home-mini-art {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--surface-2) center/cover no-repeat;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--mid);
+  font-size: 16px;
+}
+.home-mini-art::before { content: "♪"; }
+.home-mini-art.has-art::before { content: ""; }
+.home-mini-text { flex: 1; min-width: 0; overflow: hidden; }
+.home-mini-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 1.3;
+}
+.home-mini-title.scroll .hm-track {
+  display: inline-flex;
+  animation: hm-scroll var(--hm-dur, 8s) linear infinite;
+}
+.home-mini-title.scroll .hm-track span { padding-right: 2.6em; }
+@keyframes hm-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.home-mini-sub {
+  font-size: 9px;
+  color: var(--mid);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  line-height: 1.4;
+}
+.home-mini-ctrls { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+.hm-btn {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.hm-btn svg { width: 18px; }
+.hm-btn:active { transform: scale(.9); }
+.hm-btn.hm-play { background: var(--accent); color: var(--accent-ink); }
+.hm-btn.hm-play svg { width: 17px; }
 
 .calibrate {
   width: 62px;
