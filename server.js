@@ -107,7 +107,8 @@ if (!Array.isArray(queue)) {
 // del server si riparte da una coda pulita di riferimenti).
 let playNav = { current: null, history: [] };
 
-// apre un link della coda nel browser configurato
+// apre un link della coda nel browser configurato, riusando la tab attiva così
+// il video precedente non resta in riproduzione dietro a quello nuovo
 async function openQueueItem(item) {
   await helperCall({
     cmd: "openurl",
@@ -115,6 +116,7 @@ async function openQueueItem(item) {
     browser: settings.browser,
     displayIndex: settings.displayIndex,
     fullscreen: true,
+    reuseTab: true,
   });
 }
 

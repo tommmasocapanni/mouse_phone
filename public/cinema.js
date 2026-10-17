@@ -201,7 +201,7 @@
   // ---------- now playing (mini-player + schermata a tutto schermo) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false };
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false };
   try { np.auto = localStorage.getItem("dot_autoskip") === "1"; } catch (_) {}
   try { np.next = localStorage.getItem("dot_autoplay") === "1"; } catch (_) {}
 
@@ -225,6 +225,9 @@
   const npFullSite = document.getElementById("npFullSite");
   const npFullTrack = document.getElementById("npFullTrack");
   const npFullFill = document.getElementById("npFullFill");
+  const npScrub = document.getElementById("npScrub");
+  const npSeekBubble = document.getElementById("npSeekBubble");
+  const npFullThumb = document.getElementById("npFullThumb");
   const npFullCur = document.getElementById("npFullCur");
   const npFullDur = document.getElementById("npFullDur");
   const npFullPlay = document.getElementById("npFullPlay");
@@ -474,10 +477,12 @@
     setArt(npFullArt, d.art, d.site);
     npFullTitle.textContent = d.title || "MEDIA";
     npFullSite.textContent = d.site || d.url || "";
-    npFullCur.textContent = fmtTime(np.current);
     npFullDur.textContent = fmtTime(np.duration);
-    const pct = np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0;
-    npFullFill.style.width = pct + "%";
+    if (!np.scrubbing) {
+      npFullCur.textContent = fmtTime(np.current);
+      const pct = np.duration > 0 ? Math.min(100, (np.current / np.duration) * 100) : 0;
+      npFullFill.style.width = pct + "%";
+    }
 
     // autoplay: quando il video finisce passa al prossimo della coda
     const url = String(d.url || "");
@@ -524,15 +529,41 @@
     pollNp();
   }
 
-  function onNpSeek(e) {
-    if (!np.found || !np.duration) return;
+  function scrubRatio(clientX) {
     const rect = npFullTrack.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
-    const sec = ratio * np.duration;
+    return Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
+  }
+
+  function renderScrub(ratio) {
+    const sec = ratio * (np.duration || 0);
     npFullFill.style.width = ratio * 100 + "%";
+    if (npFullThumb) npFullThumb.style.left = ratio * 100 + "%";
+    if (npSeekBubble) {
+      npSeekBubble.style.left = ratio * 100 + "%";
+      npSeekBubble.textContent = fmtTime(sec);
+    }
     npFullCur.textContent = fmtTime(sec);
+  }
+
+  function scrubStart(e) {
+    if (!np.found || !np.duration) return;
+    np.scrubbing = true;
     dot.haptic();
+    if (npScrub) npScrub.classList.add("scrubbing");
+    try { npFullTrack.setPointerCapture(e.pointerId); } catch (_) {}
+    renderScrub(scrubRatio(e.clientX));
+  }
+  function scrubMove(e) {
+    if (!np.scrubbing) return;
+    renderScrub(scrubRatio(e.clientX));
+  }
+  function scrubEnd(e) {
+    if (!np.scrubbing) return;
+    np.scrubbing = false;
+    if (npScrub) npScrub.classList.remove("scrubbing");
+    const sec = scrubRatio(e.clientX) * (np.duration || 0);
     api("/api/seek", { method: "POST", body: { seconds: sec } }).catch(() => {});
+    setTimeout(pollNp, 250);
   }
 
   function npSeekBy(delta) {
@@ -689,7 +720,10 @@
   npFullSkip.addEventListener("pointerup", skipPressEnd);
   npFullSkip.addEventListener("pointerleave", skipPressEnd);
   npFullSkip.addEventListener("pointercancel", skipPressEnd);
-  npFullTrack.addEventListener("click", onNpSeek);
+  npFullTrack.addEventListener("pointerdown", scrubStart);
+  npFullTrack.addEventListener("pointermove", scrubMove);
+  npFullTrack.addEventListener("pointerup", scrubEnd);
+  npFullTrack.addEventListener("pointercancel", scrubEnd);
   npFull.addEventListener("click", (e) => {
     if (e.target === npFull) { closeNpFull(); return; }
     if (!e.target.closest(".nq-menu") && !e.target.closest(".nq-more")) hideNqMenu();

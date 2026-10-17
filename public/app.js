@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v33";
+  const BUILD = "v34";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;

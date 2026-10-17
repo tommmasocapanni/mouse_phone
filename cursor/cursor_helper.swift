@@ -217,6 +217,35 @@ func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, 
     }
 }
 
+// naviga la tab attiva del browser (riusandola) invece di aprire una nuova
+// tab/finestra: così il video precedente viene scaricato e non continua a
+// suonare in sottofondo. Ritorna true se la navigazione è andata a buon fine.
+func navigateTabInBrowser(_ urlString: String, browser: String) -> Bool {
+    let esc = escapeAppleScript(urlString)
+    let source: String
+    if browser == "safari" {
+        source = """
+        tell application "Safari"
+            if (count of windows) is 0 then return ""
+            set URL of current tab of window 1 to "\(esc)"
+            return "1"
+        end tell
+        """
+    } else if let appName = browserAppleScriptName[browser] {
+        source = """
+        tell application "\(appName)"
+            if (count of windows) is 0 then return ""
+            set URL of active tab of window 1 to "\(esc)"
+            return "1"
+        end tell
+        """
+    } else {
+        return false
+    }
+    let (ok, res) = runAppleScript(source)
+    return ok && res.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+}
+
 // MARK: - AppleScript / iniezione JavaScript nei browser
 //
 // Nota permessi: l'helper gira come figlio del terminale/Node, quindi macOS
@@ -381,6 +410,7 @@ struct Command: Decodable {
     let browser: String?
     let displayIndex: Int?
     let fullscreen: Bool?
+    let reuseTab: Bool?
     let source: String?
     let js: String?
     let visible: Bool?
@@ -430,9 +460,19 @@ stdin.readabilityHandler = { handle in
             }
         case "openurl":
             if let url = cmd.url {
+                let reuse = cmd.reuseTab ?? false
+                let browser = cmd.browser ?? "chrome"
+                let displayIndex = cmd.displayIndex
+                let fullscreen = cmd.fullscreen ?? true
                 DispatchQueue.main.async {
-                    openURLInBrowser(url, browser: cmd.browser ?? "chrome",
-                                     displayIndex: cmd.displayIndex, fullscreen: cmd.fullscreen ?? true)
+                    if reuse && navigateTabInBrowser(url, browser: browser) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+                        }
+                    } else {
+                        openURLInBrowser(url, browser: browser,
+                                         displayIndex: displayIndex, fullscreen: fullscreen)
+                    }
                 }
             }
             emit(["type": "reply", "id": cmd.id ?? 0, "ok": true])
