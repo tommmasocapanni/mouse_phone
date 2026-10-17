@@ -206,7 +206,7 @@
   // ---------- now playing (mini-player + schermata a tutto schermo) ----------
   const NP_PLAY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l12 7-12 7z"/></svg>';
   const NP_PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v14M15 5v14"/></svg>';
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0 };
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0, queueClearing: false };
 
   // avvia una transizione tra brani: mantiene viva la UI finché il nuovo video
   // non è pronto (evita che il player "sparisca e ricompaia")
@@ -464,6 +464,7 @@
   }
 
   function toggleQueue() {
+    if (np.queueClearing) { np.queueClearing = false; return; }
     dot.haptic();
     const on = !npFull.classList.contains("queue");
     npFull.classList.toggle("queue", on);
@@ -474,6 +475,26 @@
   }
 
   npFullQueue.addEventListener("click", toggleQueue);
+  let queueClearTimer = null;
+  const cancelQueueClear = () => { if (queueClearTimer) { clearTimeout(queueClearTimer); queueClearTimer = null; } };
+  npFullQueue.addEventListener("pointerdown", () => {
+    cancelQueueClear();
+    queueClearTimer = setTimeout(async () => {
+      queueClearTimer = null;
+      np.queueClearing = true;
+      try {
+        const r = await api("/api/queue/clear", { method: "POST", body: {} });
+        if (r && r.ok) {
+          dot.toast("COME SVUOTATA");
+          dot.haptic();
+          if (!npQueue.hidden) renderQueue();
+        }
+      } catch (_) {}
+    }, 5000);
+  });
+  npFullQueue.addEventListener("pointerup", cancelQueueClear);
+  npFullQueue.addEventListener("pointerleave", cancelQueueClear);
+  npFullQueue.addEventListener("pointercancel", cancelQueueClear);
   npQueueList.addEventListener("scroll", hideNqMenu);
   nqMenu.addEventListener("click", async (e) => {
     const btn = e.target.closest(".nq-menu-item");

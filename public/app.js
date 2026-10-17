@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v39";
+  const BUILD = "v40";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -11,6 +11,7 @@
   const CAL_HOLD_MS = 3000;
   const TAP_DIST = 12;
   const TAP_MS = 320;
+  const DOUBLE_TAP_MS = 350;
   const SCROLL_DIV = 1.25;
   const SWIPE_DIST = 55;
   const SWIPE_RATIO = 1.5;
@@ -746,6 +747,7 @@
   // ---------- trackpad ----------
   const pointers = new Map();
   let press = null;
+  let lastTapAt = 0;
   let padCentroid = null;
   let twoFinger = null;
   let threeFinger = null;
@@ -947,8 +949,17 @@
         if (isTap) {
           const p = padPos(e);
           addPulse(p.x, p.y);
-          send({ type: "click", button: "left" });
-          hapticTick();
+          const now = Date.now();
+          if (lastTapAt && now - lastTapAt < DOUBLE_TAP_MS) {
+            lastTapAt = 0;
+            send({ type: "doubleclick", button: "left" });
+            toastMsg("DOPPIO CLICK");
+            hapticTick();
+          } else {
+            lastTapAt = now;
+            send({ type: "click", button: "left" });
+            hapticTick();
+          }
         }
         press = null;
       }

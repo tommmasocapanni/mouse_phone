@@ -854,6 +854,14 @@ async function handleApi(req, res, url) {
       const item = await playQueueAt(i);
       return jsonResponse(res, 200, { ok: true, opened: item, queue, index: playNav.index });
     }
+    if (p === "/api/queue/clear" && method === "POST") {
+      queue = [];
+      playNav.index = -1;
+      playNav.current = null;
+      writeJson("queue.json", queue);
+      broadcast({ type: "queue", queue, index: -1 });
+      return jsonResponse(res, 200, { ok: true, queue, index: -1 });
+    }
     if (p === "/api/nowplaying" && method === "GET") {
       const r = await runBrowserJS(JS_NOWPLAYING);
       if (!r.ok) {

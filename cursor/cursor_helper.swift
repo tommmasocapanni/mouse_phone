@@ -42,6 +42,23 @@ func click(button: String) {
     u.post(tap: .cghidEventTap)
 }
 
+func doubleClick(button: String) {
+    let type: CGMouseButton = button == "right" ? .right : .left
+    let down: CGEventType = button == "right" ? .rightMouseDown : .leftMouseDown
+    let up: CGEventType = button == "right" ? .rightMouseUp : .leftMouseUp
+    let point = CGEvent(source: nil)?.location ?? .zero
+    for state in 1...2 {
+        guard let d = CGEvent(mouseEventSource: nil, mouseType: down,
+                              mouseCursorPosition: point, mouseButton: type),
+              let u = CGEvent(mouseEventSource: nil, mouseType: up,
+                              mouseCursorPosition: point, mouseButton: type) else { return }
+        d.setIntegerValueField(.mouseEventClickState, value: Int64(state))
+        d.post(tap: .cghidEventTap)
+        u.post(tap: .cghidEventTap)
+        if state == 1 { usleep(50000) }
+    }
+}
+
 func scroll(dx: Double, dy: Double) {
     guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                            wheel1: Int32(-dy.rounded()), wheel2: Int32(-dx.rounded()), wheel3: 0) else { return }
@@ -444,6 +461,8 @@ stdin.readabilityHandler = { handle in
             if let x = cmd.x, let y = cmd.y { move(nx: x, ny: y) }
         case "click":
             click(button: cmd.button ?? "left")
+        case "doubleclick":
+            doubleClick(button: cmd.button ?? "left")
         case "scroll":
             scroll(dx: cmd.dx ?? 0, dy: cmd.dy ?? 0)
         case "text":
