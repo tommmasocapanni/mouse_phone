@@ -54,6 +54,7 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 | ⏻ | Accende/spegne il puntatore |
 | ⌄ | Apre il pannello (testo, media, opzioni) |
 | CALIBRA | Riporta il puntatore al centro |
+| CALIBRA · tieni premuto 3s | Mette in **pausa** il giroscopio; un tap lo riattiva e ricentra |
 
 > Lo swipe a 3 dita invia **Ctrl+←/→** tramite **System Events**: la prima volta
 > macOS può chiedere di consentire al terminale di controllare **System Events**

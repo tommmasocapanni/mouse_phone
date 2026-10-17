@@ -342,6 +342,12 @@ body {
 .calibrate svg { width: 25px; }
 .calibrate.spin svg { animation: spin .7s ease-in-out; }
 
+.calibrate.paused {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--mid);
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* --- sheet --- */

@@ -2,12 +2,13 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v21";
+  const BUILD = "v22";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
   const DEADZONE = 0.002;
   const LONG_PRESS_MS = 350;
+  const CAL_HOLD_MS = 3000;
   const TAP_DIST = 12;
   const TAP_MS = 320;
   const SCROLL_DIV = 1.25;
@@ -67,6 +68,9 @@
   let pos = { x: 0.5, y: 0.5 };
   let lastSent = null;
   let anchored = false;
+  let gyroPaused = false;
+  let calHoldTimer = null;
+  let calLongFired = false;
   let sheetOpen = false;
   let toastTimer = null;
   let es = null;
@@ -172,7 +176,13 @@
   }
 
   function updateMode() {
-    mode.textContent = !powerOn ? "/ OFFLINE" : anchored ? "/ TRACKPAD MODE" : "/ POINTER MODE";
+    mode.textContent = !powerOn
+      ? "/ OFFLINE"
+      : gyroPaused
+        ? "/ GYRO PAUSA"
+        : anchored
+          ? "/ TRACKPAD MODE"
+          : "/ POINTER MODE";
   }
 
   function updateConn() {
@@ -423,6 +433,9 @@
       touchAction: "manipulation",
       zIndex: "3",
       WebkitTapHighlightColor: "transparent",
+      WebkitUserSelect: "none",
+      userSelect: "none",
+      WebkitTouchCallout: "none",
     });
     const sw = document.createElement("input");
     sw.type = "checkbox";
@@ -500,7 +513,7 @@
   }
 
   function onMotion(e) {
-    if (!powerOn || !confirmEl.hidden) {
+    if (!powerOn || !confirmEl.hidden || gyroPaused) {
       shakePrev = null;
       return;
     }
@@ -551,7 +564,7 @@
     // shake (fallback): se l'accelerometro non è disponibile usiamo l'orientamento,
     // che è sempre attivo perché serve al puntatore.
     if (typeof e.beta === "number" && typeof e.gamma === "number") {
-      if (powerOn && confirmEl.hidden && oriShakePrev) {
+      if (powerOn && confirmEl.hidden && oriShakePrev && !gyroPaused) {
         const d = Math.abs(e.beta - oriShakePrev.b) + Math.abs(e.gamma - oriShakePrev.g);
         if (d > ORI_SHAKE_DELTA && d < 180) shakeJolt(performance.now());
       }
@@ -564,7 +577,7 @@
     const el = euroE.filter(r.e, t);
     cur = { h, e: el };
 
-    if (!sensorsOn || !calib || !powerOn || anchored) {
+    if (!sensorsOn || !calib || !powerOn || anchored || gyroPaused) {
       if (anchored && calib) {
         const mult = sensMult();
         const sx = settings.invX ? -1 : 1;
@@ -973,14 +986,14 @@
   });
 
   // ---------- calibrazione ----------
-  cal.addEventListener("click", async () => {
+  async function doRecenter() {
     await ensureSensors();
     cal.classList.remove("spin");
     void cal.offsetWidth;
     cal.classList.add("spin");
     if (!cur) {
       toastMsg("SENSORI NON PRONTI · USA IL TRACKPAD");
-      return;
+      return false;
     }
     euroH.reset();
     euroE.reset();
@@ -988,9 +1001,54 @@
     pos = { x: 0.5, y: 0.5 };
     lastSent = { x: 0.5, y: 0.5 };
     send({ type: "move", x: 0.5, y: 0.5 });
-    toastMsg("CALIBRATION COMPLETE");
-    hapticTick();
+    return true;
+  }
+
+  function setGyroPaused(v) {
+    gyroPaused = v;
+    cal.classList.toggle("paused", v);
     updateMode();
+    hapticTick();
+    if (v) {
+      toastMsg("GIROSCOPIO IN PAUSA · TOCCA PER RIPRENDERE");
+    } else {
+      doRecenter();
+      toastMsg("GIROSCOPIO ATTIVO");
+    }
+  }
+
+  function endCalHold() {
+    if (calHoldTimer) {
+      clearTimeout(calHoldTimer);
+      calHoldTimer = null;
+    }
+  }
+
+  cal.addEventListener("pointerdown", () => {
+    calLongFired = false;
+    endCalHold();
+    calHoldTimer = setTimeout(() => {
+      calHoldTimer = null;
+      calLongFired = true;
+      setGyroPaused(!gyroPaused);
+    }, CAL_HOLD_MS);
+  });
+  cal.addEventListener("pointerup", endCalHold);
+  cal.addEventListener("pointercancel", endCalHold);
+  cal.addEventListener("pointerleave", endCalHold);
+
+  cal.addEventListener("click", async () => {
+    if (calLongFired) {
+      calLongFired = false;
+      return;
+    }
+    if (gyroPaused) {
+      setGyroPaused(false);
+      return;
+    }
+    if (await doRecenter()) toastMsg("CALIBRATION COMPLETE");
+    updateMode();
+    hapticTick();
   });
 
   // ---------- sheet ----------
