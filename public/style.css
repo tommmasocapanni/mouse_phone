@@ -130,7 +130,7 @@ body {
   width: 53px;
   height: 53px;
   border: 1px solid var(--line);
-  border-radius: 50%;
+  border-radius: 30px;
   background: var(--surface);
   display: grid;
   place-items: center;
@@ -165,7 +165,7 @@ body {
   width: 7px;
   height: 7px;
   background: var(--led);
-  border-radius: 50%;
+  border-radius: 30px;
   box-shadow: 0 0 0 3px #60bb821c;
   flex-shrink: 0;
 }
@@ -231,7 +231,7 @@ body {
 .statedot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: 30px;
   background: var(--led-off);
   flex-shrink: 0;
   transition: background .25s, box-shadow .25s;
@@ -268,7 +268,7 @@ body {
   width: 53px;
   height: 53px;
   border: 1px solid var(--line);
-  border-radius: 50%;
+  border-radius: 30px;
   background: var(--surface);
   display: grid;
   place-items: center;
@@ -308,7 +308,7 @@ body {
 .cine-icon-btn {
   width: 40px;
   height: 40px;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 1px solid var(--line);
   background: var(--surface);
   display: grid;
@@ -480,7 +480,7 @@ body {
   width: 46px;
   height: 46px;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 0;
   background: var(--accent);
   color: var(--accent-ink);
@@ -529,7 +529,7 @@ body {
 .np-full-queue {
   width: 42px;
   height: 42px;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
@@ -589,7 +589,7 @@ body {
   position: relative;
   width: 8px;
   height: 150px;
-  border-radius: 999px;
+  border-radius: 30px;
   background: var(--surface-2);
   cursor: pointer;
   touch-action: none;
@@ -608,7 +608,7 @@ body {
   right: 0;
   bottom: 0;
   height: 0%;
-  border-radius: 999px;
+  border-radius: 30px;
   background: var(--np-cover-accent);
 }
 .np-vol-thumb {
@@ -617,7 +617,7 @@ body {
   bottom: 0%;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: 30px;
   background: var(--ink);
   border: 2px solid var(--surface);
   transform: translate(-50%, 50%);
@@ -867,7 +867,7 @@ body {
   border: 0;
   background: transparent;
   color: var(--mid);
-  border-radius: 50%;
+  border-radius: 30px;
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
@@ -968,14 +968,14 @@ body {
   position: relative;
   width: 100%;
   height: 5px;
-  border-radius: 999px;
+  border-radius: 30px;
   background: var(--surface-2);
 }
 .np-full-fill {
   height: 100%;
   width: 0%;
   background: var(--np-cover-accent);
-  border-radius: 999px;
+  border-radius: 30px;
   transition: width .25s linear;
 }
 .np-full-scrub.scrubbing .np-full-fill { transition: none; }
@@ -985,7 +985,7 @@ body {
   left: 0%;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 30px;
   background: var(--np-cover-accent);
   transform: translate(-50%, -50%) scale(.6);
   opacity: 0;
@@ -1039,7 +1039,7 @@ body {
   height: 46px;
   min-width: 66px;
   padding: 0 16px;
-  border-radius: 999px;
+  border-radius: 30px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
@@ -1055,7 +1055,7 @@ body {
   min-width: 0;
   height: 66px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: 30px;
   display: grid;
   place-items: center;
 }
@@ -1064,7 +1064,7 @@ body {
   width: 84px;
   min-width: 0;
   height: 84px;
-  border-radius: 50%;
+  border-radius: 30px;
   display: grid;
   place-items: center;
 }
@@ -1091,7 +1091,7 @@ body {
   min-width: 52px;
   height: 46px;
   padding: 0 14px;
-  border-radius: 999px;
+  border-radius: 30px;
   border: 1px solid rgb(255 255 255 / .2);
   background: rgb(255 255 255 / .12);
   color: #fff;
@@ -1241,7 +1241,7 @@ body {
 .cs-back, .cs-close {
   width: 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
@@ -1452,7 +1452,7 @@ body {
   height: 20px;
   border: 5px solid var(--accent);
   background: var(--surface);
-  border-radius: 50%;
+  border-radius: 30px;
   box-shadow: 0 0 0 4px var(--paper);
 }
 
@@ -1461,7 +1461,7 @@ body {
   height: 11px;
   border: 5px solid var(--accent);
   background: var(--surface);
-  border-radius: 50%;
+  border-radius: 30px;
 }
 
 .footer {
@@ -1538,7 +1538,7 @@ body {
   width: 36px;
   height: 36px;
   border: 0;
-  border-radius: 50%;
+  border-radius: 30px;
   background: transparent;
   color: var(--ink);
   display: grid;
@@ -1558,7 +1558,7 @@ body {
 .calibrate {
   width: 62px;
   height: 62px;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 1px solid var(--accent);
   background: var(--accent);
   display: grid;
@@ -1627,7 +1627,7 @@ body {
 .mic {
   width: 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 1px solid var(--line);
   background: var(--surface);
   display: grid;
@@ -1735,7 +1735,7 @@ body {
 .ptr-ring {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: 30px;
   border: 2px solid var(--line);
   border-top-color: var(--ink);
   background: var(--surface);
@@ -1929,4 +1929,313 @@ html.is-standalone .sheet {
 }
 html.is-standalone .np-full {
   padding-bottom: calc(env(safe-area-inset-bottom) + 26px);
+}
+
+/* ===== LANDSCAPE MODE v2 ===== */
+@media (orientation: landscape) {
+  .phone {
+    width: 100dvw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .shell {
+    flex-direction: row;
+    gap: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    align-items: stretch;
+    justify-content: space-between;
+  }
+  .top {
+    position: absolute;
+    left: calc(env(safe-area-inset-left) + 10px);
+    top: calc(env(safe-area-inset-top) + 8px);
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(8px, 1.5vw, 10px);
+    width: clamp(52px, 7.5vw, 60px);
+    z-index: 15;
+  }
+  .power {
+    width: clamp(46px, 6.5vw, 54px);
+    height: clamp(46px, 6.5vw, 54px);
+    border-radius: 50%;
+    aspect-ratio: 1 / 1;
+  }
+  .connection {
+    flex-direction: column;
+    width: clamp(46px, 6.5vw, 54px);
+    height: clamp(46px, 6.5vw, 54px);
+    padding: 0;
+    border-radius: 50%;
+    gap: 0;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    aspect-ratio: 1 / 1;
+  }
+  .connection .conntexts,
+  .connection .chevron {
+    display: none;
+  }
+  .connection .led {
+    position: relative;
+    width: 6px;
+    height: 6px;
+    box-shadow: 0 0 0 2px #60bb821c;
+  }
+  .connection::after {
+    content: "";
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 16px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    opacity: 0.5;
+  }
+  .connection.off::after {
+    opacity: 0.25;
+  }
+  .connection.off .led {
+    box-shadow: none;
+  }
+  .brand {
+    position: absolute;
+    left: calc(env(safe-area-inset-left) + 10px);
+    top: calc(env(safe-area-inset-top) + 8px + clamp(46px,6.5vw,54px) + clamp(8px,1.5vw,10px) + clamp(46px,6.5vw,54px) + clamp(8px,1.5vw,10px));
+    margin: 0;
+    flex-direction: column;
+    width: clamp(52px, 7.5vw, 60px);
+    align-items: center;
+    justify-content: center;
+  }
+  .brand .name {
+    display: none;
+  }
+  .brand .dash {
+    width: clamp(46px, 6.5vw, 54px);
+    height: clamp(46px, 6.5vw, 54px);
+    border: 1px solid var(--line);
+    border-radius: 50%;
+    background: var(--surface);
+    display: grid;
+    place-items: center;
+    padding: 0;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, .02);
+    aspect-ratio: 1 / 1;
+  }
+  .brand .dash .grid {
+    width: 18px;
+    height: 18px;
+  }
+  .trackpad {
+    flex: 1 1 0%;
+    align-self: stretch;
+    height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    margin: 0 clamp(6px, 1.5vw, 10px) 0 calc(env(safe-area-inset-left) + clamp(52px,7.5vw,60px) + clamp(10px,2vw,16px));
+    order: 1;
+  }
+  .lower {
+    position: relative;
+    width: clamp(60px, 8vw, 72px);
+    height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    order: 2;
+  }
+  .sensrow {
+    display: none;
+  }
+  .sliderrow {
+    position: absolute;
+    top: calc(clamp(10px, 2.5vh, 20px) + clamp(46px, 6.5vw, 54px) + clamp(6px, 1.2vw, 10px) + min(21dvh, 160px));
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-90deg);
+    transform-origin: center center;
+    width: min(42dvh, 320px);
+    display: flex;
+    align-items: center;
+    gap: clamp(6px, 1.2vw, 8px);
+    padding: 0 4px;
+  }
+  .sliderrow > span {
+    transform: rotate(90deg);
+    font-size: clamp(12px, 1.8vw, 14px);
+    line-height: 1;
+  }
+  .slider {
+    width: 100%;
+  }
+  .footer {
+    position: absolute;
+    top: clamp(10px, 2.5vh, 20px);
+    left: 50%;
+    transform: translateX(-50%);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+  }
+  .footnote {
+    display: none;
+  }
+  .calibrate {
+    width: clamp(46px, 6.5vw, 54px);
+    height: clamp(46px, 6.5vw, 54px);
+  }
+  .home-mini {
+    position: absolute;
+    left: calc(env(safe-area-inset-left) + 10px);
+    top: calc(env(safe-area-inset-top) + 8px + clamp(46px,6.5vw,54px) + clamp(8px,1.5vw,10px) + clamp(46px,6.5vw,54px) + clamp(8px,1.5vw,10px) + clamp(46px,6.5vw,54px) + clamp(14px,2.2vw,18px));
+    transform: none;
+    margin: 0;
+    width: clamp(46px, 6.5vw, 54px);
+    max-width: none;
+    padding: clamp(9px, 1.6vw, 13px) 6px;
+    border-radius: 999px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    z-index: 10;
+    backdrop-filter: blur(10px) saturate(1.05);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
+    box-shadow: 0 8px 40px -18px var(--shadow);
+  }
+  .cinema .np-mini {
+    position: absolute;
+    left: calc(env(safe-area-inset-left) + 12px);
+    right: auto;
+    top: 50%;
+    bottom: auto;
+    margin: 0;
+    width: clamp(46px, 6.5vw, 54px);
+    max-width: none;
+    padding: clamp(9px, 1.6vw, 13px) 6px;
+    border-radius: 999px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    z-index: 10;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(10px) saturate(1.05);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
+    box-shadow: 0 8px 40px -18px var(--shadow);
+    /* centrato verticalmente; nascosto a sinistra quando non show */
+    transform: translateY(-50%) translateX(-140%);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform .28s cubic-bezier(.4, 0, .2, 1), opacity .2s ease;
+  }
+  .cinema .np-mini.show {
+    transform: translateY(-50%) translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .home-mini-art,
+  .np-mini-art {
+    width: clamp(24px, 3.6vw, 28px);
+    height: clamp(24px, 3.6vw, 28px);
+    border-radius: clamp(5px, 1vw, 6px);
+    flex-shrink: 0;
+  }
+  .home-mini-title,
+  .np-mini-title {
+    display: none;
+  }
+  .home-mini-sub,
+  .np-mini-sub {
+    display: none;
+  }
+  .home-mini-ctrls {
+    gap: 2px;
+    flex-direction: column;
+  }
+  .hm-btn,
+  .np-mini-play {
+    width: clamp(22px, 3.2vw, 26px);
+    height: clamp(22px, 3.2vw, 26px);
+  }
+  .cinema {
+    padding: calc(env(safe-area-inset-top) + 6px) calc(env(safe-area-inset-right) + 10px) calc(env(safe-area-inset-bottom) + 6px) calc(env(safe-area-inset-left) + clamp(52px,7.5vw,60px) + clamp(10px,2vw,14px));
+  }
+  .cinema .cine-head {
+    padding-left: 0;
+    padding-right: 0;
+    height: clamp(48px, 6vw, 56px);
+  }
+  .cinema .cine-body {
+    padding: clamp(8px, 1.5vw, 12px) 0 clamp(10px, 2vh, 16px);
+  }
+  .cinema.has-np .cine-body {
+    padding-bottom: clamp(10px, 2vh, 16px);
+  }
+  .tile-grid {
+    grid-template-columns: repeat(auto-fill, minmax(clamp(120px, 20vw, 168px), 1fr));
+    gap: clamp(6px, 1vw, 10px);
+  }
+  .tile {
+    min-height: clamp(50px, 11vh, 64px);
+    padding: clamp(10px, 1.6vw, 14px);
+    gap: clamp(8px, 1.4vw, 12px);
+    border-radius: clamp(12px, 1.8vw, 16px);
+  }
+  .tile-icon {
+    width: clamp(26px, 3.4vw, 32px);
+    height: clamp(26px, 3.4vw, 32px);
+  }
+  .tile-icon .glyph svg { width: clamp(20px, 2.6vw, 24px); height: clamp(20px, 2.6vw, 24px); }
+  .tile-glyph { font-size: clamp(18px, 2.4vw, 22px); }
+  .tile-favicon { width: clamp(20px, 2.6vw, 24px); height: clamp(20px, 2.6vw, 24px); }
+  .tile-label { font-size: clamp(9px, 1.3vw, 11px); }
+  .np-full {
+    padding: calc(env(safe-area-inset-top) + clamp(6px, 1.2vh, 10px)) calc(env(safe-area-inset-right) + clamp(16px, 3vw, 28px)) calc(env(safe-area-inset-bottom) + clamp(8px, 1.6vh, 14px)) calc(env(safe-area-inset-left) + clamp(16px, 3vw, 28px));
+  }
+  .np-full-down, .np-full-audio, .np-full-queue {
+    width: clamp(36px, 5.5vw, 42px);
+    height: clamp(36px, 5.5vw, 42px);
+  }
+  .np-coverflow {
+    --np-cover-base-size: min(23dvh, 128px);
+    margin: clamp(2px, 0.7vh, 6px) -26px;
+  }
+  .np-full-info { padding: 0 4px; }
+  .np-full-title {
+    font-size: clamp(14px, 2.4vw, 18px);
+    -webkit-line-clamp: 1;
+  }
+  .np-full-site {
+    font-size: clamp(8px, 1.3vw, 10px);
+    margin-top: clamp(2px, 0.5vh, 5px);
+  }
+  .np-full-spacer { min-height: 2px; }
+  .np-full-toggles { margin: 0 0 clamp(6px, 1.2vh, 12px); }
+  .np-toggle { height: clamp(32px, 5.5vh, 40px); min-width: clamp(42px, 7.5vw, 50px); }
+  .np-full-scrub { margin-top: 0; }
+  .np-full-track { height: clamp(14px, 2.6vh, 18px); }
+  .np-full-times { margin-top: clamp(3px, 0.6vh, 7px); }
+  .np-full-controls {
+    margin-top: clamp(1px, 0.4vh, 5px);
+    margin-bottom: clamp(2px, 0.5vh, 7px);
+  }
+  .np-ctl { height: clamp(34px, 5.8vh, 42px); }
+  .np-ctl-icon { width: clamp(46px, 8vw, 56px); height: clamp(46px, 8vh, 56px); }
+  .np-ctl-icon svg { width: clamp(26px, 4vw, 30px); height: clamp(26px, 4vw, 30px); }
+  .np-ctl-play { width: clamp(56px, 9.5vw, 68px); height: clamp(56px, 9.5vh, 68px); }
+  .np-ctl-play svg { width: clamp(30px, 4.6vw, 36px); }
+  .np-seek { height: clamp(40px, 6.4vh, 50px); }
+  .np-seek-ico, .np-seek-ico svg { width: clamp(24px, 3.6vw, 28px); height: clamp(24px, 3.6vw, 28px); }
 }

@@ -32,6 +32,9 @@
 
   const $ = (id) => document.getElementById(id);
   const pad = $("trackpad");
+  const homeMiniEl = document.getElementById("homeMini");
+  const shellEl = document.querySelector(".shell");
+  const footerEl = document.querySelector(".footer");
   const canvas = $("dotcanvas");
   const range = $("sensitivity");
   const value = $("sensitivityValue");
@@ -103,6 +106,51 @@
   let oriShakePrev = null;
   let shakeAt = -1e9;
   let joltTimes = [];
+  let orientationAngle = 0;
+  let currentRotation = 0;
+
+  function getRotation() {
+    let ang = 0;
+    if (screen.orientation && typeof screen.orientation.angle === "number") {
+      ang = screen.orientation.angle;
+    } else if (typeof window.orientation === "number") {
+      ang = window.orientation;
+    }
+    ang = ((ang % 360) + 360) % 360;
+    if (ang === 180) ang = 0;
+    return ang;
+  }
+
+  function updateOrientation() {
+    orientationAngle = getRotation();
+    currentRotation = orientationAngle;
+    const isLandscape = orientationAngle === 90 || orientationAngle === 270;
+    document.documentElement.setAttribute("data-orientation", isLandscape ? "landscape" : "portrait");
+    document.documentElement.classList.toggle("is-landscape", isLandscape);
+    document.documentElement.classList.toggle("is-portrait", !isLandscape);
+    // in landscape sposto il mini player fuori da .footer (che ha position:absolute+transform,
+    // creando un containing block che lo spingerebbe a destra) rendendolo figlio diretto di .shell
+    if (homeMiniEl && shellEl && footerEl) {
+      if (isLandscape) {
+        if (homeMiniEl.parentElement !== shellEl) shellEl.appendChild(homeMiniEl);
+      } else {
+        const cal = document.getElementById("calibrate");
+        if (homeMiniEl.parentElement !== footerEl) {
+          if (cal) footerEl.insertBefore(homeMiniEl, cal);
+          else footerEl.appendChild(homeMiniEl);
+        }
+      }
+    }
+  }
+  updateOrientation();
+  try {
+    if (screen.orientation && screen.orientation.addEventListener) {
+      screen.orientation.addEventListener("change", updateOrientation);
+    }
+  } catch (_) {}
+  window.addEventListener("orientationchange", updateOrientation, { passive: true });
+  window.addEventListener("resize", updateOrientation, { passive: true });
+
 
   // modalità web app (icona su Home): iOS riporta un viewport più corto
   // dello schermo fisico (793 vs 852); qui porto .phone all'altezza fisica
@@ -836,7 +884,7 @@
     addTrailPoint(p.x, p.y, performance.now());
   }
 
-  function moveBy(dx, dy) {
+    function moveBy(dx, dy) {
     const rect = pad.getBoundingClientRect();
     const k = sensMult() / rect.width;
     pos.x = clamp01(pos.x + dx * k);
