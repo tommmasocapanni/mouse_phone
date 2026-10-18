@@ -1232,6 +1232,10 @@ function handleMessage(msg) {
     case "gesture":
       if (msg.action === "missionControl") {
         missionControl();
+      } else if (msg.action === "fullscreenOn") {
+        sendHelper({ cmd: "fullscreen", fullscreen: true });
+      } else if (msg.action === "fullscreenOff") {
+        sendHelper({ cmd: "fullscreen", fullscreen: false });
       }
       break;
     case "media":

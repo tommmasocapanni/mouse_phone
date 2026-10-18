@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v41";
+  const BUILD = "v42";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -15,6 +15,9 @@
   const SCROLL_DIV = 1.25;
   const SWIPE_DIST = 55;
   const SWIPE_RATIO = 1.5;
+  const PINCH_DIST = 40;
+  const PINCH_RATIO = 1.2;
+  const PINCH_DEBOUNCE_MS = 600;
   const MISSION_CONTROL_DEBOUNCE_MS = 600;
   const SHAKE_DELTA = 20;
   const ORI_SHAKE_DELTA = 62;
@@ -51,7 +54,6 @@
   const precisionBtn = $("precision");
   const invXBtn = $("invX");
   const invYBtn = $("invY");
-  const missionControlBtn = $("missionControl");
   const ptr = $("ptr");
   const ptrLabel = $("ptrLabel");
   const confirmEl = $("confirm");
@@ -59,7 +61,7 @@
   const confirmCancel = $("confirmCancel");
 
   const settings = Object.assign(
-    { sens: 50, precision: false, invX: false, invY: false, missionControl: true },
+    { sens: 50, precision: false, invX: false, invY: false },
     JSON.parse(localStorage.getItem("mouse_phone.v4") || "{}")
   );
 
@@ -86,6 +88,7 @@
   let lastFlushAt = 0;
   let lastEventAt = performance.now();
   let lastMissionControlAt = 0;
+  let lastPinchAt = 0;
   let diagnosticNotice = "";
   let diagnosticTimer = null;
   let disconnectedSince = 0;
@@ -885,6 +888,9 @@
           moved: false,
           x0: (pts[0].x + pts[1].x) / 2,
           y0: (pts[0].y + pts[1].y) / 2,
+          d0: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          pinchFired: false,
+          pinchLocked: false,
         };
       } else if (pointers.size === 3) {
         // tre dita: niente scroll/click, gestiamo lo swipe tra le scrivanie
@@ -932,7 +938,7 @@
         // L'asse dominante seleziona una sola azione e lascia inattive le diagonali ambigue.
         if (Math.abs(dy) > Math.abs(dx) * SWIPE_RATIO && Math.abs(dy) > SWIPE_DIST) {
           threeFinger.fired = true;
-          if (dy < 0 && settings.missionControl && Date.now() - lastMissionControlAt >= MISSION_CONTROL_DEBOUNCE_MS) {
+          if (dy < 0 && Date.now() - lastMissionControlAt >= MISSION_CONTROL_DEBOUNCE_MS) {
             lastMissionControlAt = Date.now();
             send({ type: "gesture", action: "missionControl" });
             gestureHapticTick();
@@ -954,7 +960,32 @@
       if (twoFinger && Math.hypot(cx - twoFinger.x0, cy - twoFinger.y0) > TAP_DIST) {
         twoFinger.moved = true;
       }
-      const canScroll = !twoFinger || twoFinger.moved;
+      // pinch a due dita: le dita si avvicinano (esci fullscreen) o si
+      // allontanano (entra fullscreen). Si distingue dallo scroll perché qui
+      // le dita si muovono l'una rispetto all'altra mentre il centroide resta
+      // fermo; se prima parte il centroide, lo scroll vince e il pinch si blocca.
+      if (twoFinger && pointers.size === 2 && !twoFinger.pinchFired && !twoFinger.pinchLocked) {
+        const cm = Math.hypot(cx - twoFinger.x0, cy - twoFinger.y0);
+        const dd = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) - twoFinger.d0;
+        if (Math.abs(dd) > PINCH_DIST && Math.abs(dd) > cm * PINCH_RATIO) {
+          twoFinger.pinchFired = true;
+          twoFinger.moved = true;
+          if (Date.now() - lastPinchAt >= PINCH_DEBOUNCE_MS) {
+            lastPinchAt = Date.now();
+            gestureHapticTick();
+            if (dd > 0) {
+              send({ type: "gesture", action: "fullscreenOn" });
+              toastMsg("SCHERMO INTERO");
+            } else {
+              send({ type: "gesture", action: "fullscreenOff" });
+              toastMsg("ESCI SCHERMO INTERO");
+            }
+          }
+        } else if (cm > TAP_DIST * 2) {
+          twoFinger.pinchLocked = true;
+        }
+      }
+      const canScroll = !twoFinger || (twoFinger.moved && !twoFinger.pinchFired);
       if (padCentroid && canScroll) {
         const k = sensMult() / SCROLL_DIV;
         const now = performance.now();
@@ -988,8 +1019,8 @@
       hapticTick();
       toastMsg("RIGHT CLICK");
     }
-    // fine dello scroll a due dita -> avvia l'inerzia
-    if (twoFinger && before === 2 && twoFinger.moved) startMomentum();
+    // fine dello scroll a due dita -> avvia l'inerzia (non dopo un pinch)
+    if (twoFinger && before === 2 && twoFinger.moved && !twoFinger.pinchFired) startMomentum();
     if (pointers.size < 2) twoFinger = null;
     if (threeFinger && !threeFinger.pointerIds.every((id) => pointers.has(id))) threeFinger = null;
 
@@ -1269,8 +1300,6 @@
     precisionBtn.classList.toggle("active", settings.precision);
     invXBtn.classList.toggle("active", settings.invX);
     invYBtn.classList.toggle("active", settings.invY);
-    missionControlBtn.classList.toggle("active", settings.missionControl);
-    missionControlBtn.setAttribute("aria-pressed", String(settings.missionControl));
   }
 
   precisionBtn.addEventListener("click", () => {
@@ -1288,12 +1317,6 @@
     settings.invY = !settings.invY;
     paintChips();
     save();
-  });
-  missionControlBtn.addEventListener("click", () => {
-    settings.missionControl = !settings.missionControl;
-    paintChips();
-    save();
-    hapticTick();
   });
   paintChips();
 

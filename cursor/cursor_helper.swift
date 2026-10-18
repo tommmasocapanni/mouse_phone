@@ -213,6 +213,34 @@ func moveFrontWindow(displayIndex: Int?, fullscreen: Bool) {
     }
 }
 
+// Entra/esce dallo schermo intero nativo (AXFullScreen) della finestra focale,
+// senza ridimensionarla. Se l'AX fallisce, come fallback invia ⌃⌘F (shortcut di
+// sistema per lo schermo intero).
+func setFrontWindowFullscreen(_ on: Bool) {
+    var applied = false
+    if let app = NSWorkspace.shared.frontmostApplication {
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        var winRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+           let winVal = winRef {
+            let win = winVal as! AXUIElement
+            var cur: CFTypeRef?
+            AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &cur)
+            if (cur as? Bool) != on {
+                applied = AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString, on ? kCFBooleanTrue : kCFBooleanFalse) == .success
+            } else {
+                applied = true
+            }
+        }
+    }
+    if applied { return }
+    print("fullscreen AX fallito, fallback ⌃⌘F")
+    let (ok, _) = runAppleScript(
+        "tell application \"System Events\" to key code 3 using {control down, command down}"
+    )
+    if !ok { print("fullscreen fallback ⌃⌘F fallito") }
+}
+
 // apre un URL in un browser specifico, poi sposta/mette a schermo intero la
 // finestra sul display di destinazione (dopo un breve ritardo, il tempo che la
 // finestra compaia).
@@ -691,6 +719,12 @@ stdin.readabilityHandler = { handle in
         case "movefront":
             DispatchQueue.main.async {
                 moveFrontWindow(displayIndex: cmd.displayIndex, fullscreen: cmd.fullscreen ?? false)
+            }
+            emit(["type": "reply", "id": cmd.id ?? 0, "ok": true])
+        case "fullscreen":
+            let target = cmd.fullscreen ?? true
+            DispatchQueue.main.async {
+                setFrontWindowFullscreen(target)
             }
             emit(["type": "reply", "id": cmd.id ?? 0, "ok": true])
         case "applescript":
