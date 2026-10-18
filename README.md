@@ -1,4 +1,4 @@
-# mouse_phone
+# dot.
 Trackpad + puntatore wireless per il Mac, in Safari su iPhone (UI stile Nothing "dot.").
 
 ## Setup
