@@ -1912,3 +1912,21 @@ body {
     margin-bottom: 18px;
   }
 }
+
+/* web app su Home ("Apri come app web"): iOS riporta un viewport più corto
+   dello schermo fisico (793 vs 852 sull'iPhone 16 = 59px). Compensazioni:
+   - .phone esteso all'altezza fisica (--screen-h da app.js), ancorato in alto
+   - padding in basso ridotto (l'inset 34px dell'home indicator basta) */
+html.is-standalone body {
+  align-items: start;
+}
+html.is-standalone .phone {
+  height: var(--screen-h, 100dvh);
+}
+html.is-standalone .shell,
+html.is-standalone .sheet {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 14px);
+}
+html.is-standalone .np-full {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 26px);
+}

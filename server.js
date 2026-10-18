@@ -374,6 +374,25 @@ function isAuthed(req, url) {
   return token.length > 0 && token === settings.token;
 }
 
+// hostname che non devono mai essere raggiunti dal proxy cover (SSRF):
+// loopback, RFC1918, link-local, mDNS e consimili.
+function isPrivateHost(hostname) {
+  const h = String(hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h) return true;
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") ||
+      h.endsWith(".internal") || h.endsWith(".home")) return true;
+  if (h === "::1" || h === "::" || h.startsWith("fe80:")) return true;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    if (a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) ||
+        (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+        (a === 192 && b === 168)) return true;
+  }
+  return false;
+}
+
 // rate limit molto semplice in memoria, per IP.
 const rateBuckets = new Map();
 function rateLimited(key, max = 40, windowMs = 10000) {
@@ -815,6 +834,43 @@ async function handleApi(req, res, url) {
         if (Array.isArray(rep.data)) displays = rep.data;
       } catch (_) {}
       return jsonResponse(res, 200, { displays, target: settings.displayIndex });
+    }
+    // proxy per le cover del player: l'immagine deve arrivare same-origin
+    // per poterne campionare i pixel (canvas), ma molti CDN (es.
+    // youtube.com/img) non mandano header CORS e il canvas resterebbe
+    // tainted — da qui il campionamento colori falliva e il gradiente
+    // tornava al default quasi-bianco in light-mode.
+    if (p === "/api/artproxy" && method === "GET") {
+      const target = url.searchParams.get("url") || "";
+      let parsed;
+      try { parsed = new URL(target); } catch (_) { parsed = null; }
+      if (!parsed || !["http:", "https:"].includes(parsed.protocol) || isPrivateHost(parsed.hostname)) {
+        return jsonResponse(res, 400, { error: "url cover non valido" });
+      }
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 8000);
+        const resp = await fetch(parsed.href, {
+          signal: ctrl.signal,
+          redirect: "follow",
+          headers: { "User-Agent": "Mozilla/5.0" },
+        });
+        clearTimeout(timer);
+        // anche dopo un redirect: non si deve mai finire su host privati
+        try { if (isPrivateHost(new URL(resp.url).hostname)) return jsonResponse(res, 400, { error: "url cover non valido" }); } catch (_) {}
+        const type = (resp.headers.get("content-type") || "").split(";")[0].trim();
+        if (!resp.ok || !type.startsWith("image/")) return jsonResponse(res, 502, { error: "cover non scaricabile" });
+        const buf = Buffer.from(await resp.arrayBuffer());
+        if (buf.length > 5 * 1024 * 1024) return jsonResponse(res, 502, { error: "cover troppo grande" });
+        res.writeHead(200, {
+          "Content-Type": type,
+          "Content-Length": buf.length,
+          "Cache-Control": "public, max-age=86400",
+        });
+        return res.end(buf);
+      } catch (_) {
+        return jsonResponse(res, 502, { error: "cover non scaricabile" });
+      }
     }
     if (p === "/api/bookmarks" && method === "GET") {
       return jsonResponse(res, 200, { bookmarks });

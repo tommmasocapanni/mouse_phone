@@ -438,6 +438,31 @@
     try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return ""; }
   }
 
+  // accent noto per sito: usato come fallback quando la cover non si
+  // riesce a scaricare/campionare (es. CDN senza CORS e proxy in fallita)
+  const SITE_ACCENTS = {
+    "youtube.com": [228, 58, 50],
+    "youtube-nocookie.com": [228, 58, 50],
+    "youtu.be": [228, 58, 50],
+    "netflix.com": [229, 9, 20],
+    "spotify.com": [30, 215, 96],
+    "soundcloud.com": [255, 85, 0],
+    "twitch.tv": [145, 70, 255],
+    "music.apple.com": [250, 60, 60],
+    "tidal.com": [23, 185, 236],
+    "deezer.com": [167, 32, 110],
+    "disneyplus.com": [20, 100, 255],
+    "primevideo.com": [0, 163, 221],
+  };
+
+  function siteAccent(site) {
+    const host = String(site || "").replace(/^www\./, "");
+    for (const key of Object.keys(SITE_ACCENTS)) {
+      if (host === key || host.endsWith("." + key)) return SITE_ACCENTS[key];
+    }
+    return null;
+  }
+
   function youtubeVideoId(url) {
     try {
       const parsed = new URL(url);
@@ -507,13 +532,22 @@
     return coverItems.find((item) => item.key === coverFocusKey) || coverItems[0] || null;
   }
 
-  function rememberCoverColor(url, color) {
+  function rememberCoverColor(url, color, accent) {
     coverColorCache.delete(url);
-    coverColorCache.set(url, color);
+    coverColorCache.set(url, color ? color.join(" ") + (accent ? " " + accent.join(" ") : "") : null);
     if (coverColorCache.size > 32) coverColorCache.delete(coverColorCache.keys().next().value);
   }
 
-  function applyCoverPalette(color) {
+  function parseCoverColor(value) {
+    if (!value) return { color: null, accent: null };
+    const parts = value.split(" ").map(Number);
+    return {
+      color: parts.length >= 3 ? parts.slice(0, 3) : null,
+      accent: parts.length >= 6 ? parts.slice(3, 6) : null,
+    };
+  }
+
+  function applyCoverPalette(color, accent) {
     if (!color) {
       npFull.style.removeProperty("--np-cover-rgb");
       npFull.style.removeProperty("--np-cover-top");
@@ -529,19 +563,29 @@
     }
 
     const darkMode = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const base = darkMode ? [14, 14, 14] : [251, 251, 250];
-    const top = color.map((channel, index) => {
-      const tinted = base[index] * 0.72 + channel * 0.28;
+    const neutral = darkMode ? [14, 14, 14] : [251, 251, 250];
+    // light-mode: come base del gradiente si usa l'accent saturo della
+    // cover (es. il rosso di una card YouTube). Con la media di una cover
+    // chiara il gradiente resterebbe quasi bianco e la UI bianca del
+    // player (controlli, icone) non si leggerebbe. Dark resta sulla media.
+    const source = darkMode ? color : (accent || color);
+    const mix = darkMode ? 0.28 : 0.62;
+    const top = source.map((channel, index) => {
+      const tinted = neutral[index] * (1 - mix) + channel * mix;
       return Math.round(darkMode ? tinted * 0.9 + 255 * 0.1 : tinted);
     });
-    const bottom = color.map((channel, index) => {
-      const blend = (top[index] * 0.48 + channel * 0.52) * 0.8;
-      return Math.round(Math.min(blend, top[index] * 0.82));
-    });
+    // in light-mode il fondo si approfondisce verso l'accento: unisce
+    // top e bottom troppo simili (tutto rosso pieno, "solido")
+    const bottom = darkMode
+      ? source.map((channel, index) => {
+          const blend = (top[index] * 0.48 + channel * 0.52) * 0.8;
+          return Math.round(Math.min(blend, top[index] * 0.82));
+        })
+      : source.map((channel) => Math.round(channel * 0.7));
     const cssColor = (rgb) => `rgb(${rgb.join(" ")})`;
-    const miniSolid = color.map((channel) => Math.round(channel * 0.42));
+    const miniSolid = source.map((channel) => Math.round(channel * 0.42));
     const hexColor = `#${top.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-    npFull.style.setProperty("--np-cover-rgb", color.join(" "));
+    npFull.style.setProperty("--np-cover-rgb", source.join(" "));
     npFull.style.setProperty("--np-cover-top", cssColor(top));
     npFull.style.setProperty("--np-cover-bottom", cssColor(bottom));
     homeMini.style.setProperty("--np-cover-rgb", color.join(" "));
@@ -561,15 +605,21 @@
       return;
     }
     if (coverColorCache.has(url)) {
-      const color = coverColorCache.get(url);
-      applyCoverPalette(color ? color.split(" ").map(Number) : null);
+      const cached = parseCoverColor(coverColorCache.get(url));
+      applyCoverPalette(cached.color, cached.accent);
       return;
     }
 
     const image = new Image();
     image.crossOrigin = "anonymous";
+    // la cover arriva via proxy same-origin: molti CDN (es. youtube.com/
+    // img) non mandano header CORS e senza proxy il canvas resterebbe
+    // tainted — il campionamento colori fallirebbe e il gradiente
+    // tornerebbe al default quasi-bianco
+    const fallbackAccent = siteAccent(item && item.site);
     image.onload = () => {
       let color = null;
+      let accent = null;
       try {
         const canvas = document.createElement("canvas");
         canvas.width = COVER_COLOR_SAMPLE_SIZE;
@@ -582,32 +632,71 @@
         let green = 0;
         let blue = 0;
         let count = 0;
+        const samples = [];
         for (let i = 0; i < pixels.length; i += 4) {
           if (pixels[i + 3] < 32) continue;
           red += pixels[i];
           green += pixels[i + 1];
           blue += pixels[i + 2];
           count++;
+          samples.push(pixels[i], pixels[i + 1], pixels[i + 2]);
         }
         if (count) color = [Math.round(red / count), Math.round(green / count), Math.round(blue / count)];
+        // accent: la media dei pixel più saturo della cover (es. il rosso
+        // di una card YouTube bianca). Serve in light-mode come base del
+        // gradiente: con la media di una cover chiara il gradiente
+        // schiarisce tanto da rendere illeggibile la UI bianca del player.
+        const satOf = (r, g, b) => {
+          const mx = Math.max(r, g, b);
+          const mn = Math.min(r, g, b);
+          return mx === 0 ? 0 : (mx - mn) / mx;
+        };
+        let maxSat = 0;
+        for (let i = 0; i < samples.length; i += 3) {
+          maxSat = Math.max(maxSat, satOf(samples[i], samples[i + 1], samples[i + 2]));
+        }
+        if (maxSat >= 0.15) {
+          let ar = 0;
+          let ag = 0;
+          let ab = 0;
+          let ac = 0;
+          for (let i = 0; i < samples.length; i += 3) {
+            const r = samples[i];
+            const g = samples[i + 1];
+            const b = samples[i + 2];
+            if (satOf(r, g, b) < maxSat * 0.8) continue;
+            // quasi-bianco = tutti i canali alti (il max NON basta:
+            // un rosso vivo ha max 255 e deve restare)
+            if (Math.min(r, g, b) > 235) continue;
+            if (Math.max(r, g, b) < 36) continue;
+            ar += r;
+            ag += g;
+            ab += b;
+            ac++;
+          }
+          if (ac) accent = [Math.round(ar / ac), Math.round(ag / ac), Math.round(ab / ac)];
+        }
       } catch (_) {
         color = null;
+        accent = null;
       }
-      rememberCoverColor(url, color ? color.join(" ") : null);
+      rememberCoverColor(url, color, accent);
       if (request !== coverColorRequest || url !== coverColorUrl) return;
-      applyCoverPalette(color);
+      applyCoverPalette(color, accent);
     };
     image.onerror = () => {
-      rememberCoverColor(url, null);
-      if (request === coverColorRequest && url === coverColorUrl) applyCoverPalette(null);
+      // neppure il proxy è arrivato a capo: almeno l'accento noto del
+      // sito (es. rosso YouTube) tiene in piedi il gradiente
+      rememberCoverColor(url, fallbackAccent, fallbackAccent);
+      if (request === coverColorRequest && url === coverColorUrl) applyCoverPalette(fallbackAccent, fallbackAccent);
     };
-    image.src = url;
+    image.src = "/api/artproxy?url=" + encodeURIComponent(url) + "&token=" + encodeURIComponent(token);
   }
 
   const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
   const refreshCoverPaletteForScheme = () => {
-    const color = coverColorCache.get(coverColorUrl);
-    if (color) applyCoverPalette(color.split(" ").map(Number));
+    const cached = parseCoverColor(coverColorCache.get(coverColorUrl));
+    if (cached.color) applyCoverPalette(cached.color, cached.accent);
   };
   if (darkModeQuery.addEventListener) darkModeQuery.addEventListener("change", refreshCoverPaletteForScheme);
   else if (darkModeQuery.addListener) darkModeQuery.addListener(refreshCoverPaletteForScheme);

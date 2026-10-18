@@ -2,7 +2,7 @@
   "use strict";
 
   const DEG = Math.PI / 180;
-  const BUILD = "v40";
+  const BUILD = "v41";
   const GAIN_X = 1 / (2 * 50);
   const GAIN_Y = 1 / (2 * 40);
   const EMA = 0.32;
@@ -100,6 +100,20 @@
   let oriShakePrev = null;
   let shakeAt = -1e9;
   let joltTimes = [];
+
+  // modalità web app (icona su Home): iOS riporta un viewport più corto
+  // dello schermo fisico (793 vs 852); qui porto .phone all'altezza fisica
+  // dello schermo e riduco il padding in basso (vedi style.css).
+  if (
+    navigator.standalone === true ||
+    (window.matchMedia && matchMedia("(display-mode: standalone)").matches)
+  ) {
+    document.documentElement.classList.add("is-standalone");
+    document.documentElement.style.setProperty(
+      "--screen-h",
+      `${Math.max(window.innerHeight, screen.height)}px`
+    );
+  }
 
   // ---------- filtro One Euro (con supporto angoli) ----------
   class OneEuro {
@@ -216,9 +230,8 @@
     }
     const mode = standalone ? "WEBAPP" : "SAFARI";
     const state = es ? (connected ? "OPEN" : "RECONNECT") : "none";
-    const hint = standalone ? " · rimuovi l'icona e ri-aggiungila SENZA 'Apri come app web'" : "";
     diagEl.textContent =
-      `${BUILD} ${mode} · ${location.origin} · sse:${state} · err:${lastError || "-"} · close:${closeInfo || "-"} · tent#${attempts}${hint}`;
+      `${BUILD} ${mode} · ${location.origin} · sse:${state} · err:${lastError || "-"} · close:${closeInfo || "-"} · tent#${attempts}`;
     diagEl.classList.add("show");
   }
 
