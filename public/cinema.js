@@ -427,7 +427,7 @@
   let coverInfoTimer = null;
   let coverPointer = null;
   let coverSuppressClick = false;
-  let coverColorUrl = "";
+  let coverColorUrl = null;
   let coverColorRequest = 0;
   const coverColorCache = new Map();
   const COVER_COLOR_SAMPLE_SIZE = 12;
@@ -461,6 +461,28 @@
       if (host === key || host.endsWith("." + key)) return SITE_ACCENTS[key];
     }
     return null;
+  }
+
+  function hslToRgb(h, s, l) {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    const bands = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]];
+    const band = bands[Math.floor(h / 60) % 6];
+    return band.map((v) => Math.round((v + m) * 255));
+  }
+
+  // colore di ripiego quando non esiste cover: accento noto del sito oppure
+  // un hue stabile derivato dall'URL. Senza questo il gradiente in light-mode
+  // resterebbe piatto su --paper (quasi bianco) e tutta la UI del player
+  // (controlli, icone, testi forzati in bianco) diventerebbe illeggibile.
+  function fallbackCoverColor(item) {
+    const accent = siteAccent(item && item.site);
+    if (accent) return accent;
+    const seed = String((item && (item.url || item.title)) || "media");
+    let hash = 0;
+    for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+    return hslToRgb(hash % 360, 0.55, 0.45);
   }
 
   function youtubeVideoId(url) {
@@ -601,12 +623,18 @@
     coverColorUrl = url;
     const request = ++coverColorRequest;
     if (!url) {
-      applyCoverPalette(null);
+      // nessuna cover: almeno un gradiente colorato (accento del sito o
+      // hue stabile dall'URL) — in light-mode il fondo piatto su --paper
+      // renderebbe invisibile la UI bianca del player
+      const fallback = fallbackCoverColor(item);
+      rememberCoverColor("", fallback, fallback);
+      applyCoverPalette(fallback, fallback);
       return;
     }
     if (coverColorCache.has(url)) {
       const cached = parseCoverColor(coverColorCache.get(url));
-      applyCoverPalette(cached.color, cached.accent);
+      const fallback = cached.color ? null : fallbackCoverColor(item);
+      applyCoverPalette(cached.color || fallback, cached.accent || fallback);
       return;
     }
 
@@ -680,6 +708,8 @@
         color = null;
         accent = null;
       }
+      if (!color) color = accent || fallbackCoverColor(item);
+      if (!accent) accent = color;
       rememberCoverColor(url, color, accent);
       if (request !== coverColorRequest || url !== coverColorUrl) return;
       applyCoverPalette(color, accent);
@@ -687,8 +717,9 @@
     image.onerror = () => {
       // neppure il proxy è arrivato a capo: almeno l'accento noto del
       // sito (es. rosso YouTube) tiene in piedi il gradiente
-      rememberCoverColor(url, fallbackAccent, fallbackAccent);
-      if (request === coverColorRequest && url === coverColorUrl) applyCoverPalette(fallbackAccent, fallbackAccent);
+      const fallback = fallbackAccent || fallbackCoverColor(item);
+      rememberCoverColor(url, fallback, fallback);
+      if (request === coverColorRequest && url === coverColorUrl) applyCoverPalette(fallback, fallback);
     };
     image.src = "/api/artproxy?url=" + encodeURIComponent(url) + "&token=" + encodeURIComponent(token);
   }
