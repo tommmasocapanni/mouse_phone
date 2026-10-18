@@ -157,6 +157,10 @@ const MIME = {
   ".png": "image/png",
   ".ico": "image/x-icon",
   ".webmanifest": "application/manifest+json",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".aac": "audio/aac",
 };
 
 const server = https.createServer(
@@ -243,21 +247,61 @@ div{text-align:center}img{width:min(72vmin,360px)}p{font-size:11px;letter-spacin
       res.writeHead(403).end();
       return;
     }
-    fs.readFile(full, (err, data) => {
-      if (err) {
+    fs.stat(full, (err, st) => {
+      if (err || !st.isFile()) {
         res.writeHead(404).end("not found");
         return;
       }
-      // inietta il token di pairing nella pagina: il client lo usa come Bearer.
-      let out = data;
+      const type = MIME[path.extname(full)] || "application/octet-stream";
+
+      // index.html: inietta il token di pairing e risponde intero.
       if (file === "/index.html") {
-        out = Buffer.from(data.toString("utf8").replace(/__PAIR_TOKEN__/g, settings.token));
+        fs.readFile(full, (e2, data) => {
+          if (e2) { res.writeHead(404).end("not found"); return; }
+          const out = Buffer.from(data.toString("utf8").replace(/__PAIR_TOKEN__/g, settings.token));
+          res.writeHead(200, {
+            "Content-Type": type,
+            "Content-Length": out.length,
+            "Cache-Control": "no-store, must-revalidate",
+          });
+          res.end(out);
+        });
+        return;
       }
+
+      // Supporto Range + Content-Length: necessari perché il loader media di
+      // iOS (AVPlayer) rifiuta le risposte chunked senza lunghezza/range
+      // (MEDIA_ERR_SRC_NOT_SUPPORTED).
+      const range = req.headers.range;
+      if (range) {
+        const m = /bytes=(\d*)-(\d*)/.exec(range);
+        let start = m && m[1] ? parseInt(m[1], 10) : 0;
+        let end = m && m[2] ? parseInt(m[2], 10) : st.size - 1;
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (!Number.isFinite(end) || end >= st.size) end = st.size - 1;
+        if (start > end || start >= st.size) {
+          res.writeHead(416, { "Content-Range": "bytes */" + st.size });
+          res.end();
+          return;
+        }
+        res.writeHead(206, {
+          "Content-Type": type,
+          "Content-Length": end - start + 1,
+          "Content-Range": "bytes " + start + "-" + end + "/" + st.size,
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "no-store, must-revalidate",
+        });
+        fs.createReadStream(full, { start, end }).pipe(res);
+        return;
+      }
+
       res.writeHead(200, {
-        "Content-Type": MIME[path.extname(full)] || "application/octet-stream",
+        "Content-Type": type,
+        "Content-Length": st.size,
+        "Accept-Ranges": "bytes",
         "Cache-Control": "no-store, must-revalidate",
       });
-      res.end(out);
+      fs.createReadStream(full).pipe(res);
     });
   }
 );

@@ -78,7 +78,9 @@
   }
 
   function applyOffline() {
-    bodyEl.classList.toggle("offline", !dot.online());
+    const online = dot.online();
+    bodyEl.classList.toggle("offline", !online);
+    if (!online) updateMediaSession(null);
   }
 
   // ---------- sheet (bottom card dentro la view Cinema) ----------
@@ -1027,6 +1029,7 @@
       npMiniSub.textContent = "TOCCA PER LE IMPOSTAZIONI ⚙";
       npMiniPlay.style.visibility = "hidden";
       showHomeMini(false);
+      updateMediaSession(null);
       return;
     }
 
@@ -1044,6 +1047,7 @@
         npMini.classList.remove("show");
         document.getElementById("cinema").classList.remove("has-np");
         showHomeMini(false);
+        updateMediaSession(null);
       }
       return;
     }
@@ -1097,11 +1101,15 @@
       np.ending = true;
       npQueueNext(true);
     }
+
+    updateMediaSession(d);
   }
 
   async function pollNp() {
     if (!np.running || np.busy) return;
-    if (document.hidden || !dot.online()) return;
+    // in background continuiamo a interrogare solo mentre stiamo pubblicando lo
+    // stato "in riproduzione" (così il widget a schermo bloccato resta aggiornato)
+    if ((document.hidden && !npSilentWanted) || !dot.online()) return;
     np.busy = true;
     try { applyNp(await api("/api/nowplaying", { method: "GET" })); } catch (_) {}
     np.busy = false;
@@ -1126,6 +1134,184 @@
     npSchedule();
   }
 
+  // ---------- schermo bloccato / Control Center (Media Session API) ----------
+  // iOS mostra il widget "in riproduzione" solo se la pagina sta suonando:
+  // teniamo attivo un audio silenzioso in loop mentre il Mac riproduce e
+  // pubblichiamo i metadati del brano tramite la Media Session API.
+  const MS = (typeof navigator !== "undefined" && navigator.mediaSession) ? navigator.mediaSession : null;
+  // file audio silenzioso servito dall'app: su iOS il data-URI non basta,
+  // serve una risorsa audio reale (con MIME corretto) perché la pagina diventi
+  // "now playing" e compaia il widget a schermo bloccato. Il file è lungo
+  // (3 ore): se durasse poco, il loop azzererebbe di continuo la timeline.
+  const NP_SILENT_SRC = "/silent.m4a?v=2";
+  // dichiara la pagina come app di riproduzione (WebKit/iOS): mantiene viva la
+  // sessione audio in background e abilita i controlli del lock screen
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (_) {}
+  let npSilent = null;
+  let npSilentWanted = false;
+  let npSilentPlaying = false;
+  let npMetaKey = "";
+  let npSessionArmed = false;
+  let npTestUntil = 0;
+
+  function makeSilent() {
+    const a = document.createElement("audio");
+    a.src = NP_SILENT_SRC;
+    a.setAttribute("type", "audio/mp4");
+    a.loop = true;
+    a.preload = "auto";
+    a.setAttribute("playsinline", "");
+    a.setAttribute("webkit-playsinline", "");
+    a.style.cssText = "position:absolute;width:0;height:0;opacity:0;pointer-events:none";
+    a.setAttribute("aria-hidden", "true");
+    document.body.appendChild(a);
+    return a;
+  }
+
+  // avvia SEMPRE con un elemento nuovo: su iOS 26 (PWA) un elemento riusato
+  // può restare "stuck" (play() risolve ma non esce audio). WebKit #295518.
+  function startSilent() {
+    if (npSilent) {
+      try { npSilent.pause(); npSilent.removeAttribute("src"); npSilent.load(); npSilent.remove(); } catch (_) {}
+    }
+    const a = makeSilent();
+    npSilent = a;
+    const p = a.play();
+    if (p && typeof p.catch === "function") p.catch(() => {});
+    return p;
+  }
+
+  function silentPlay(wanted = true) {
+    npSilentWanted = wanted;
+    if (npSilentPlaying) return Promise.resolve();
+    npSilentPlaying = true;
+    const p = startSilent();
+    if (p && typeof p.catch === "function") {
+      p.catch(() => { npSilentPlaying = false; npSessionArmed = false; }); // permetti il retry
+    }
+    return p;
+  }
+
+  function silentPause() {
+    npSilentWanted = false;
+    npSilentPlaying = false;
+    if (npSilent && !npSilent.paused) { try { npSilent.pause(); } catch (_) {} }
+  }
+
+  // sblocca l'audio col primo tocco (policy autoplay iOS): da lì in poi possiamo
+  // avviarlo/fermarlo in background senza altri gesti dell'utente
+  function armSilent() {
+    if (npSessionArmed) return;
+    npSessionArmed = true;
+    const keep = npSilentWanted;
+    const p = silentPlay(keep);
+    if (p && typeof p.catch === "function") {
+      p.catch(() => { npSessionArmed = false; npSilentPlaying = false; }); // riprova al prossimo tocco
+    }
+    if (!keep) setTimeout(() => { if (!npSilentWanted) silentPause(); }, 400);
+  }
+  ["pointerdown", "touchstart", "keydown"].forEach((ev) =>
+    window.addEventListener(ev, armSilent, { passive: true })
+  );
+  // se ci aspettiamo audio ma è in pausa (es. play rifiutato prima), riprova ad
+  // ogni tocco: il gesto sblocca la riproduzione
+  window.addEventListener("pointerdown", () => { if (npSilentWanted) silentPlay(); }, { passive: true });
+
+  function updateMediaSession(d) {
+    if (!MS) return;
+    if (!d) {
+      if (Date.now() < npTestUntil) return;
+      silentPause();
+      npMetaKey = "";
+      try { MS.metadata = null; MS.playbackState = "none"; } catch (_) {}
+      return;
+    }
+    const title = d.title || "MEDIA";
+    const site = d.site || hostOf(d.url || "");
+    const art = d.art || "";
+    const key = title + "|" + site + "|" + art;
+    if (key !== npMetaKey) {
+      npMetaKey = key;
+      const artwork = [];
+      if (art) artwork.push({ src: art, sizes: "512x512" });
+      else if (site) artwork.push({ src: "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(site) + "&sz=256", sizes: "256x256" });
+      try {
+        MS.metadata = new MediaMetadata({ title: title, artist: site || "dot.", album: "dot. remote", artwork: artwork });
+      } catch (_) {}
+    }
+    try { MS.playbackState = d.paused ? "paused" : "playing"; } catch (_) {}
+    const dur = Number(d.duration) || 0;
+    const pos = Number(d.current) || 0;
+    if (dur > 0 && MS.setPositionState) {
+      try { MS.setPositionState({ duration: dur, position: Math.max(0, Math.min(pos, dur)), playbackRate: 1 }); } catch (_) {}
+    }
+    if (d.paused) silentPause(); else silentPlay();
+  }
+
+  // ripubblica lo stato corrente del player sul lock screen (usato dopo i
+  // comandi play/pausa, anche quando il polling è sospeso in background)
+  function publishSession() {
+    if (!np.found) return;
+    const t = np.currentTrack || {};
+    updateMediaSession({
+      title: t.title || "MEDIA",
+      site: t.site || "",
+      art: t.art || "",
+      url: t.url || np.url,
+      current: np.current,
+      duration: np.duration,
+      paused: np.paused,
+    });
+  }
+
+  function seekToRemote(seconds) {
+    if (!ensureOnline()) return;
+    const dur = np.duration || 0;
+    const t = dur > 0 ? Math.max(0, Math.min(dur, seconds)) : Math.max(0, seconds);
+    np.current = t;
+    api("/api/seek", { method: "POST", body: { seconds: t } }).catch(() => {});
+    setTimeout(pollNp, 250);
+  }
+
+  function setupMediaSession() {
+    if (!MS) return;
+    const on = (name, fn) => { try { MS.setActionHandler(name, fn); } catch (_) {} };
+    on("play", () => { if (!np.found) { pollNp(); return; } if (np.paused) npToggle(); });
+    on("pause", () => { if (np.found && !np.paused) npToggle(); });
+    on("previoustrack", () => npNav("prev"));
+    on("nexttrack", () => npNav("next"));
+    on("seekbackward", (e) => npSeekBy(-(e && e.seekOffset ? e.seekOffset : 10)));
+    on("seekforward", (e) => npSeekBy(e && e.seekOffset ? e.seekOffset : 10));
+    on("seekto", (e) => { if (np.found && e && e.seekTime != null) seekToRemote(e.seekTime); });
+    on("stop", () => { if (np.found && !np.paused) npToggle(); silentPause(); });
+  }
+  setupMediaSession();
+
+  // diagnostica: forza un brano di prova sul lock screen per capire se iOS
+  // accetta la sessione media (va premuto, così l'audio parte con un gesto)
+  async function testLockScreen() {
+    if (!MS) return "MEDIA SESSION NON SUPPORTATA";
+    npTestUntil = Date.now() + 30000;
+    try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (_) {}
+    try {
+      if (window.MediaMetadata) MS.metadata = new MediaMetadata({ title: "TEST dot.", artist: "Mouse Phone", album: "diagnostica" });
+      MS.playbackState = "playing";
+    } catch (_) {}
+    silentPause(); // forza un elemento nuovo (workaround iOS 26 PWA)
+    const p = silentPlay(true);
+    const a = npSilent;
+    const ios = (navigator.userAgent.match(/OS (\d+)[._](\d+)/) || [, "", ""]);
+    const standalone = (navigator.standalone === true) || (window.matchMedia && matchMedia("(display-mode: standalone)").matches);
+    const info = () => "iOS" + (ios[1] ? ios[1] + "." + ios[2] : "?") + (standalone ? "/PWA" : "/safari") +
+      " rs=" + a.readyState + " ns=" + a.networkState + " err=" + (a.error ? a.error.code + "/" + a.error.message : "-") + " paused=" + a.paused;
+    try {
+      await p;
+      return "OK · " + info();
+    } catch (e) {
+      return "BLOCCATO · " + (e && e.name ? e.name : "ERR") + " · " + info() + " · src=" + (a.currentSrc || a.src || "-");
+    }
+  }
+
   async function npToggle() {
     if (np.mode === "hint") { openSettingsSheet(); return; }
     if (!np.found) { pollNp(); return; }
@@ -1134,6 +1320,7 @@
     const newPaused = !np.paused;
     np.paused = newPaused;
     setNpIcons(newPaused);
+    publishSession();
     try { await api("/api/player", { method: "POST", body: { action: newPaused ? "pause" : "play" } }); } catch (_) {}
     pollNp();
   }
@@ -1629,6 +1816,14 @@
       } catch (e) { skipOut.textContent = "ERRORE · " + e.message; skipOut.classList.add("err"); }
     }});
 
+    const lsOut = h("div", { class: "cs-diag" });
+    const lsBtn = h("button", { class: "cs-chip", text: "TESTA PLAYER LOCK SCREEN", onclick: async () => {
+      lsOut.className = "cs-diag";
+      lsOut.textContent = "…";
+      lsOut.textContent = await testLockScreen();
+      lsOut.classList.add(/^OK/.test(lsOut.textContent) ? "ok" : "err");
+    }});
+
     openSheet(h("div", {},
       sheetHead("IMPOSTAZIONI"),
       h("div", { class: "cs-label", text: "BROWSER" }), browserRow,
@@ -1641,6 +1836,7 @@
           dot.toast("SALVATO");
         } catch (e) { dot.toast("ERRORE: " + e.message.toUpperCase()); }
       }}),
+      h("div", { class: "cs-label", text: "PLAYER LOCK SCREEN" }), lsBtn, lsOut,
       h("div", { class: "cs-label", text: "DIAGNOSI PLAYER" }), diagBtn, diagOut,
       h("div", { class: "cs-label", text: "DIAGNOSI SALTA ANNUNCIO" }), skipBtn, skipOut
     ));
