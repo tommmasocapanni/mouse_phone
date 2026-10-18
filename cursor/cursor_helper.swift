@@ -6,6 +6,23 @@ import CoreAudio
 
 let displayBounds = CGDisplayBounds(CGMainDisplayID())
 
+// Desktop virtuale: unione dei bounds di tutti gli display attivi, nelle
+// coordinate globali Quartz (tengono conto della disposizione scelta in
+// Sistema→Schermi). Ricalcolato a ogni use: hot-plug e riordino schermi
+// funzionano senza riavviare l'helper.
+func desktopBounds() -> CGRect {
+    var count: UInt32 = 0
+    CGGetActiveDisplayList(0, nil, &count)
+    guard count > 0 else { return displayBounds }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    CGGetActiveDisplayList(count, &ids, &count)
+    var union = CGRect.null
+    for id in ids.prefix(Int(count)) {
+        union = union.union(CGDisplayBounds(id))
+    }
+    return union.isNull ? displayBounds : union
+}
+
 func isTrusted() -> Bool {
     let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
     let opts = [key: true] as CFDictionary
@@ -22,8 +39,9 @@ func emit(_ obj: [String: Any]) {
 }
 
 func move(nx: Double, ny: Double) {
-    let point = CGPoint(x: displayBounds.origin.x + max(0, min(1, nx)) * displayBounds.width,
-                        y: displayBounds.origin.y + max(0, min(1, ny)) * displayBounds.height)
+    let bounds = desktopBounds()
+    let point = CGPoint(x: bounds.origin.x + max(0, min(1, nx)) * bounds.width,
+                        y: bounds.origin.y + max(0, min(1, ny)) * bounds.height)
     guard let ev = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                            mouseCursorPosition: point, mouseButton: .left) else { return }
     ev.post(tap: .cghidEventTap)
@@ -608,11 +626,14 @@ struct Command: Decodable {
 }
 
 let trusted = isTrusted()
+let desk = desktopBounds()
 emit([
     "type": "helper",
     "trusted": trusted,
     "display": ["x": displayBounds.origin.x, "y": displayBounds.origin.y,
                 "w": displayBounds.width, "h": displayBounds.height],
+    "desktop": ["x": desk.origin.x, "y": desk.origin.y,
+                "w": desk.width, "h": desk.height],
     "displays": screenList(),
 ])
 
