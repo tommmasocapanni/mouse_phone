@@ -275,9 +275,15 @@ func escapeAppleScript(_ s: String) -> String {
             .replacingOccurrences(of: "\"", with: "\\\"")
 }
 
-func runAppleScript(_ source: String) -> (Bool, String) {
+// Esegue l'AppleScript wrappato in `with timeout of N seconds`: una tab
+// scartata di Arc (o un dialogo di permesso in attesa) può lasciare la
+// chiamata Apple Events sospesa per sempre e, senza scadenza, bloccherebbe
+// l'intera coda dei comandi dell'helper (bug già capitato con il primo
+// contatto con Arc). NSAppleScript va eseguito sul main thread.
+func runAppleScript(_ source: String, timeoutSec: Int = 10) -> (Bool, String) {
+    let wrapped = "with timeout of \(timeoutSec) seconds\n\(source)\nend timeout"
     var error: NSDictionary?
-    if let script = NSAppleScript(source: source) {
+    if let script = NSAppleScript(source: wrapped) {
         let out = script.executeAndReturnError(&error)
         if let err = error {
             let msg = (err[NSAppleScript.errorMessage] as? String) ?? "errore AppleScript"
@@ -297,7 +303,7 @@ let browserAppleScriptName: [String: String] = [
     "edge": "Microsoft Edge",
 ]
 
-func execJSInBrowser(browser: String, js: String) -> (Bool, String) {
+func execJSInBrowser(browser: String, js: String, tabIndex: Int? = nil) -> (Bool, String) {
     let escaped = escapeAppleScript(js)
     if browser == "safari" {
         let source = """
@@ -311,13 +317,174 @@ func execJSInBrowser(browser: String, js: String) -> (Bool, String) {
     guard let appName = browserAppleScriptName[browser] else {
         return (false, "browser non supportato per l'iniezione JS (usa Safari, Chrome, Arc, Brave o Edge)")
     }
+    let tabPart = tabIndex.map { "tab \($0) of front window" } ?? "front window's active tab"
     let source = """
     tell application "\(appName)"
         if (count of windows) is 0 then return ""
-        execute front window's active tab javascript "\(escaped)"
+        execute \(tabPart) javascript "\(escaped)"
     end tell
     """
     return runAppleScript(source)
+}
+
+// Scorre le tab della front window alla ricerca di una che sta suonando
+// (audible) e ci esegue probe: restituisce l'indice della prima tab il cui
+// risultato contiene "1". Serve quando il media sta in una tab di secondo
+// piano (pinned tab / spazio diverso, es. Spotify) e non nella attiva.
+func findMediaTab(browser: String, probe: String) -> Int? {
+    guard let appName = browserAppleScriptName[browser] else { return nil }
+    let escaped = escapeAppleScript(probe)
+    let source = """
+    tell application "\(appName)"
+        if (count of windows) is 0 then return ""
+        set n to count of tabs of front window
+        repeat with i from 1 to n
+            try
+                if (audible of tab i of front window) then
+                    set r to (execute tab i of front window javascript "\(escaped)")
+                    if r contains "1" then return (i as text)
+                end if
+            end try
+        end repeat
+    end tell
+    return ""
+    """
+    let (ok, res) = runAppleScript(source, timeoutSec: 15)
+    guard ok else { return nil }
+    return Int(res.trimmingCharacters(in: .whitespacesAndNewlines))
+}
+
+// MARK: - Arc: media in tab di secondo piano
+//
+// Arc (dictionary AppleScript custom, non Chromium) esegue JS **solo** sulla
+// tab attiva: `execute tab i ...` su qualsiasi altra tab resta in hang.
+// Per raggiungere una tab di secondo piano si usa quindi la sequenza
+// select → execute sulla attiva → ripristino della tab precedente (via id).
+
+// Esegue js su una tab di secondo piano di Arc identificata da id (UUID),
+// selezionandola temporaneamente e ripristinando quella attiva prima del ritorno.
+func execJSInArcTab(tabId: String, js: String) -> (Bool, String) {
+    let escaped = escapeAppleScript(js)
+    let tid = escapeAppleScript(tabId)
+    let source = """
+    tell application "Arc"
+        if (count of windows) is 0 then return ""
+        set n to count of tabs of front window
+        set prevId to ((id of active tab of front window) as text)
+        set prevIdx to -1
+        set targetIdx to -1
+        repeat with i from 1 to n
+            try
+                set cid to ((id of tab i of front window) as text)
+                if cid is "\(tid)" then set targetIdx to i
+                if cid is prevId then set prevIdx to i
+            end try
+        end repeat
+        if targetIdx < 0 then return ""
+        select tab targetIdx of front window
+        set r to (execute front window's active tab javascript "\(escaped)")
+        if prevIdx > 0 then select tab prevIdx of front window
+        return r
+    end tell
+    """
+    // scan id + execute + ripristino in un unico script: serve più fiato
+    return runAppleScript(source, timeoutSec: 12)
+}
+
+struct ArcMediaHit {
+    let tabId: String
+    let result: String
+}
+
+// Cerca su Arc una tab (titolo che combacia con pattern, max 8 candidati)
+// che abbia un elemento media, la seleziona, ci esegue full e ripristina.
+// Restituisce nil se nessuna tab ha media. Il titolo si legge senza JS, per
+// questo si filtra prima: danzare su tutte le tab sarebbe insostenibile.
+func findMediaTabArc(probe: String, full: String, pattern: String) -> ArcMediaHit? {
+    let scan = """
+    tell application "Arc"
+        if (count of windows) is 0 then return ""
+        set n to count of tabs of front window
+        set prevId to ((id of active tab of front window) as text)
+        set prevIdx to -1
+        set outp to ""
+        repeat with i from 1 to n
+            try
+                set cid to ((id of tab i of front window) as text)
+                if cid is prevId then set prevIdx to i
+                set outp to outp & i & "%%" & cid & "%%" & (title of tab i of front window) & linefeed
+            end try
+        end repeat
+        return (prevIdx as text) & "@@@" & outp
+    end tell
+    """
+    let (ok, res) = runAppleScript(scan, timeoutSec: 25)
+    guard ok else { return nil }
+    let parts = res.components(separatedBy: "@@@")
+    guard parts.count >= 2, let prevIdx = Int(parts[0]) else { return nil }
+    var candidates: [(idx: Int, id: String)] = []
+    let rx = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    for line in parts[1].split(separator: "\n", omittingEmptySubsequences: true) {
+        let seg = line.components(separatedBy: "%%")
+        guard seg.count >= 3, let idx = Int(seg[0]) else { continue }
+        let title = seg[2...].joined(separator: "%%")
+        let range = NSRange(title.startIndex..., in: title)
+        if rx?.firstMatch(in: title, options: [], range: range) != nil {
+            candidates.append((idx, seg[1]))
+        }
+        if candidates.count >= 8 { break }
+    }
+    let probeEsc = escapeAppleScript(probe)
+    let fullEsc = escapeAppleScript(full)
+    func runFull(_ idx: Int) -> (Bool, String) {
+        let d = """
+        tell application "Arc"
+            select tab \(idx) of front window
+            set r to (execute front window's active tab javascript "\(fullEsc)")
+            if \(prevIdx) > 0 then select tab \(prevIdx) of front window
+            return r
+        end tell
+        """
+        return runAppleScript(d, timeoutSec: 7)
+    }
+    var pausedHit: (idx: Int, id: String)? = nil
+    for c in candidates {
+        // probe: "0" niente, "1" media in pausa, "2" in riproduzione — la
+        // riproduzione ha la precedenza: una tab vecchia in pausa (es.
+        // pagina YouTube abbandonata) non deve sovrascrivere il media che
+        // sta suonando da un'altra parte
+        let dance = """
+        tell application "Arc"
+            select tab \(c.idx) of front window
+            set p to (execute front window's active tab javascript "\(probeEsc)")
+            if p contains "2" then
+                set r to (execute front window's active tab javascript "\(fullEsc)")
+                if \(prevIdx) > 0 then select tab \(prevIdx) of front window
+                return r
+            end if
+            if p contains "1" then
+                if \(prevIdx) > 0 then select tab \(prevIdx) of front window
+                return "PAUSA"
+            end if
+            if \(prevIdx) > 0 then select tab \(prevIdx) of front window
+            return ""
+        end tell
+        """
+        let (dok, dres) = runAppleScript(dance, timeoutSec: 7)
+        if dok && dres == "PAUSA" {
+            if pausedHit == nil { pausedHit = c }
+        } else if dok && !dres.isEmpty {
+            return ArcMediaHit(tabId: c.id, result: dres)
+        }
+    }
+    // nessuna tab in riproduzione tra i candidati: usa la prima in pausa
+    if let p = pausedHit {
+        let (rok, rres) = runFull(p.idx)
+        if rok && !rres.isEmpty {
+            return ArcMediaHit(tabId: p.id, result: rres)
+        }
+    }
+    return nil
 }
 
 // MARK: - Uscita audio (CoreAudio)
@@ -431,6 +598,10 @@ struct Command: Decodable {
     let reuseTab: Bool?
     let source: String?
     let js: String?
+    let tabIndex: Int?
+    let tabId: String?
+    let full: String?
+    let pattern: String?
     let visible: Bool?
     let deviceId: Int?
     let volume: Int?
@@ -512,12 +683,41 @@ stdin.readabilityHandler = { handle in
             }
         case "execjs":
             if let js = cmd.js {
+                let tabIndex = cmd.tabIndex
+                let tabId = cmd.tabId
+                let browser = cmd.browser ?? "chrome"
                 DispatchQueue.main.async {
-                    let (ok, res) = execJSInBrowser(browser: cmd.browser ?? "chrome", js: js)
-                    emit(["type": "reply", "id": cmd.id ?? 0, "ok": ok, "result": res])
+                    // Arc: JS solo sulla tab attiva → su una tab di secondo
+                    // piano (id) serve la danza select/ripristino
+                    if browser == "arc", let tabId = tabId {
+                        let (ok, res) = execJSInArcTab(tabId: tabId, js: js)
+                        emit(["type": "reply", "id": cmd.id ?? 0, "ok": ok, "result": res])
+                    } else {
+                        let (ok, res) = execJSInBrowser(browser: browser, js: js, tabIndex: tabIndex)
+                        emit(["type": "reply", "id": cmd.id ?? 0, "ok": ok, "result": res])
+                    }
                 }
             } else {
                 emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "js mancante"])
+            }
+        case "findmediatab":
+            let browser = cmd.browser ?? "chrome"
+            let probe = cmd.js ?? "1"
+            let full = cmd.full ?? ""
+            let pattern = cmd.pattern ?? ""
+            DispatchQueue.main.async {
+                if browser == "arc" {
+                    if let hit = findMediaTabArc(probe: probe, full: full, pattern: pattern) {
+                        emit(["type": "reply", "id": cmd.id ?? 0, "ok": true, "tabId": hit.tabId, "result": hit.result])
+                    } else {
+                        emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "nessuna tab con media"])
+                    }
+                } else if let idx = findMediaTab(browser: browser, probe: probe) {
+                    let (_, res) = execJSInBrowser(browser: browser, js: full, tabIndex: idx)
+                    emit(["type": "reply", "id": cmd.id ?? 0, "ok": true, "tabIndex": idx, "result": res])
+                } else {
+                    emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "nessuna tab con media"])
+                }
             }
         case "audiolist":
             DispatchQueue.main.async {

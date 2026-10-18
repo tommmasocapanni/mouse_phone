@@ -591,18 +591,110 @@ function jsPlayer(action, seconds) {
   return "(function(){" + find + "if(v.paused){var p=v.play();if(p&&p.catch)p.catch(function(){});}else{v.pause();}return '1';})()";
 }
 
-async function runBrowserJS(js) {
+async function runBrowserJS(js, tabIndex = null) {
   if (settings.browser === "default") {
     return { ok: false, reason: "no-browser", error: "seleziona un browser specifico (Safari/Chrome/Arc) nelle impostazioni" };
   }
   try {
-    const rep = await helperCall({ cmd: "execjs", browser: settings.browser, js }, 6000);
-    return { ok: true, result: String(rep.result == null ? "" : rep.result) };
+    const cmd = { cmd: "execjs", browser: settings.browser, js };
+    if (tabIndex) cmd.tabIndex = tabIndex;
+    const rep = await helperCall(cmd, 8000);
+    return { ok: true, result: unquoteChromiumResult(String(rep.result == null ? "" : rep.result)) };
   } catch (e) {
     const msg = String(e.message || "errore");
     const noPerm = /javascript|apple\s?events|non .*consentito|not allowed|privilege|non è consentito/i.test(msg);
     return { ok: false, reason: noPerm ? "permission" : "error", error: msg };
   }
+}
+
+// I browser Chromium (Chrome/Arc/Brave/Edge) restituiscono le stringhe
+// JSON-wrappate tra virgolette (es. "{"a":1}" arriva come "{\"a\":1}"):
+// le sbuzziamo una volta qui, così tutti i consumatori (nowplaying,
+// player, seek, skip-ads) ricevono il valore pieno. Safari torna stringhe
+// nude: non toccato.
+function unquoteChromiumResult(result) {
+  if (["chrome", "arc", "brave", "edge"].includes(settings.browser) &&
+      result.length > 1 && result.startsWith('"') && result.endsWith('"')) {
+    try {
+      const un = JSON.parse(result);
+      if (typeof un === "string") return un;
+    } catch (_) {}
+  }
+  return result;
+}
+
+// Su Chromium (es. Arc) il media spesso sta in una tab di secondo piano
+// (pinned tab o spazio diverso, es. Spotify/Netflix) e non nella tab attiva:
+// runMediaJS prova prima la tab attiva e, se non c'è media, fa cercare
+// all'helper una tab con titolo "da media" che abbia un elemento video/audio
+// e la usa (cache) per tutte le chiamate successive. Su Arc l'helper la
+// raggiunge con select/ripristino (JS solo su tab attiva). Safari è
+// mono-tab attiva come sempre.
+let mediaTabId = null;        // id (UUID) tab con media — Arc
+let mediaTabIndex = null;     // indice tab con media — Chrome/Brave/Edge
+let mediaTabBrowser = null;
+let mediaScanAt = 0;
+
+// probe: '0' niente media, '1' media in pausa, '2' in riproduzione
+const MEDIA_PROBE =
+  "(function(){var v=document.querySelector('video')||document.querySelector('audio');if(!v||v.ended)return '0';return v.paused?'1':'2';})()";
+// titoli tab che consideriamo "potenzialmente in riproduzione" per il
+// prefilter (senza questo, danzare su tutte le tab è insostenibile)
+const MEDIA_TITLE_RE =
+  "spotify|netflix|youtube|youtu\\.be|soundcloud|disney\\+?|prime ?video|primevideo|tidal|deezer|music\\.apple|apple ?music|twitch|vimeo|hbo|max\\b|paramount|jellyfin|plex|vlc|mpv|infuse";
+
+async function runMediaJS(js, opts = {}) {
+  if (!["chrome", "arc", "brave", "edge"].includes(settings.browser)) return runBrowserJS(js);
+  const hit = opts.hit || (() => true);
+  const preferPlaying = opts.preferPlaying || null;
+  // 1. tab nota da una precedente scansione (Arc: danza select/ripristino)
+  if (mediaTabBrowser === settings.browser && (mediaTabId || mediaTabIndex)) {
+    try {
+      const cmd = { cmd: "execjs", browser: settings.browser, js };
+      if (settings.browser === "arc" && mediaTabId) cmd.tabId = mediaTabId;
+      else if (mediaTabIndex) cmd.tabIndex = mediaTabIndex;
+      const rep = await helperCall(cmd, 12000);
+      const result = unquoteChromiumResult(String(rep.result == null ? "" : rep.result));
+      if (hit(result)) return { ok: true, result };
+    } catch (_) {}
+    mediaTabId = null;
+    mediaTabIndex = null;
+  }
+  // 2. tab attiva della finestra frontale (percorso veloce)
+  const active = await runBrowserJS(js);
+  let fallback = null;
+  if (active.ok && hit(active.result)) {
+    // con preferPlaying un media in pausa nella tab attiva (es. pagina
+    // YouTube abbandonata) non basta: vale solo come fallback se non
+    // esiste un media in riproduzione da qualche altra parte
+    if (!preferPlaying || preferPlaying(active.result)) return active;
+    fallback = active;
+  }
+  // 3. cerca una tab con titolo-media che abbia un video/audio (con TTL:
+  //    il polling non deve rigirare la scansione a ogni chiamata)
+  if (opts.find && Date.now() - mediaScanAt > 15000) {
+    mediaScanAt = Date.now();
+    try {
+      const f = await helperCall({
+        cmd: "findmediatab", browser: settings.browser,
+        js: MEDIA_PROBE, full: js, pattern: MEDIA_TITLE_RE,
+      }, 90000);
+      if (f && f.ok) {
+        const result = unquoteChromiumResult(String(f.result == null ? "" : f.result));
+        if (hit(result)) {
+          // si mette in cache solo un media in riproduzione: se anche la
+          // scansione ha trovato solo pausa, resta la tab attiva
+          if (!preferPlaying || preferPlaying(result)) {
+            mediaTabId = f.tabId || null;
+            mediaTabIndex = f.tabIndex || null;
+            mediaTabBrowser = settings.browser;
+            return { ok: true, result };
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  return fallback || active;
 }
 
 const VIDEO_EXT = new Set([
@@ -866,7 +958,16 @@ async function handleApi(req, res, url) {
       return jsonResponse(res, 200, { ok: true, queue, index: -1 });
     }
     if (p === "/api/nowplaying" && method === "GET") {
-      const r = await runBrowserJS(JS_NOWPLAYING);
+      const r = await runMediaJS(JS_NOWPLAYING, {
+        find: true,
+        hit: (res) => /"found":true/.test(res),
+        // un media in pausa (es. video YouTube della tab attiva lasciato
+        // lì) non deve sovrascrivere un media che sta suonando in un'altra
+        // tab: si torna al risultato solo se nient'altro sta suonando
+        preferPlaying: (res) => {
+          try { const o = JSON.parse(res); return !!o.found && !o.paused && !o.ended; } catch (_) { return false; }
+        },
+      });
       if (!r.ok) {
         return jsonResponse(res, 200, { found: false, reason: r.reason, error: r.error, browser: settings.browser });
       }
@@ -888,7 +989,8 @@ async function handleApi(req, res, url) {
     if (p === "/api/player" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
       const action = ["play", "pause", "toggle"].includes(b.action) ? b.action : "toggle";
-      const r = await runBrowserJS(jsPlayer(action));
+      const hitMedia = (res) => res !== "0" && res !== "";
+      const r = await runMediaJS(jsPlayer(action), { find: true, hit: hitMedia });
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
       return jsonResponse(res, 200, { ok: true, action, hit: r.result === "1" });
     }
@@ -898,7 +1000,7 @@ async function handleApi(req, res, url) {
         let d = Number(b.delta);
         if (!isFinite(d)) return jsonResponse(res, 400, { error: "delta non valido" });
         d = Math.max(-600, Math.min(600, d));
-        const rr = await runBrowserJS(jsPlayer("seekrel", d));
+        const rr = await runMediaJS(jsPlayer("seekrel", d), { find: true, hit: (res) => res !== "0" && res !== "" });
         if (!rr.ok) return jsonResponse(res, 200, { ok: false, reason: rr.reason, error: rr.error });
         const pos = Number(rr.result);
         return jsonResponse(res, 200, { ok: true, delta: d, position: isFinite(pos) ? pos : null });
@@ -906,12 +1008,12 @@ async function handleApi(req, res, url) {
       let sec = Number(b.seconds);
       if (!isFinite(sec) || sec < 0) return jsonResponse(res, 400, { error: "seconds non valido" });
       sec = Math.min(sec, 12 * 3600);
-      const r = await runBrowserJS(jsPlayer("seek", sec));
+      const r = await runMediaJS(jsPlayer("seek", sec), { find: true, hit: (res) => res !== "0" && res !== "" });
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
       return jsonResponse(res, 200, { ok: true, hit: r.result === "1" });
     }
     if (p === "/api/skip" && method === "POST") {
-      const r = await runBrowserJS(JS_SKIP);
+      const r = await runMediaJS(JS_SKIP, { find: false, hit: (res) => !!res });
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
       let out = { clicked: null, ad: false };
       try {
