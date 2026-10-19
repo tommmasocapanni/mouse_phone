@@ -182,35 +182,127 @@ func targetScreen(index: Int?) -> [String: Any]? {
     return list.first
 }
 
-// Sposta la finestra in primo piano sul display scelto e, se richiesto, la porta
-// a schermo intero nativo (AXFullScreen). Richiede il permesso Accessibilità.
-func moveFrontWindow(displayIndex: Int?, fullscreen: Bool) {
-    guard let scr = targetScreen(index: displayIndex),
-          let app = NSWorkspace.shared.frontmostApplication else { return }
-    let axApp = AXUIElementCreateApplication(app.processIdentifier)
-    var winRef: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
-          let winVal = winRef else { return }
-    let win = winVal as! AXUIElement
-    let x = scr["x"] as? Double ?? 0
-    let y = scr["y"] as? Double ?? 0
-    let w = scr["w"] as? Double ?? 0
-    let h = scr["h"] as? Double ?? 0
-    var pos = CGPoint(x: x, y: y)
-    var size = CGSize(width: w, height: h)
-    if let pv = AXValueCreate(.cgPoint, &pos) {
-        AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv)
+// Finestra focalizzata di una data applicazione (nil se assente).
+func focusedWindow(_ pid: pid_t) -> AXUIElement? {
+    var v: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid),
+                                        kAXFocusedWindowAttribute as CFString, &v) == .success,
+          let v else { return nil }
+    return (v as! AXUIElement)
+}
+
+// La finestra su cui agire: se noto il bundle id lo cerco per primo (così non
+// rischio di spostare la finestra di un'altra app se il frontmostApplication
+// non è ancora aggiornato), altrimenti uso quella in primo piano.
+func axWindow(forBundle bundleId: String?) -> AXUIElement? {
+    if let b = bundleId,
+       let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == b }),
+       let w = focusedWindow(app.processIdentifier) {
+        return w
     }
-    if let sv = AXValueCreate(.cgSize, &size) {
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
+    if let app = NSWorkspace.shared.frontmostApplication,
+       bundleId == nil || app.bundleIdentifier == bundleId {
+        return focusedWindow(app.processIdentifier)
     }
-    if fullscreen {
-        var cur: CFTypeRef?
-        AXUIElementCopyAttributeValue(win, "AXFullScreen" as CFString, &cur)
-        if (cur as? Bool) != true {
-            AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString, kCFBooleanTrue)
+    return nil
+}
+
+func axPoint(_ w: AXUIElement, _ attr: String) -> CGPoint? {
+    var pv: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(w, attr as CFString, &pv) == .success, let pv else { return nil }
+    var pt = CGPoint.zero
+    AXValueGetValue(pv as! AXValue, .cgPoint, &pt)
+    return pt
+}
+
+// true se la finestra è già sul display di destinazione e in schermo intero
+// come richiesto: in quel caso non si tocca nulla (niente flicker, niente attese).
+func windowAlreadyOnTarget(_ win: AXUIElement, x: Double, y: Double, fullscreen: Bool) -> Bool {
+    guard let p = axPoint(win, kAXPositionAttribute as String) else { return false }
+    let fs = (winAttr(win, "AXFullScreen") as? Bool) == true
+    return abs(p.x - CGFloat(x)) < 2 && abs(p.y - CGFloat(y)) < 2 && fs == fullscreen
+}
+
+// L'uscita dallo schermo intero è asincrona (~0.75s) e quando finisce la
+// finestra torna al vecchio frame: bisogna aspettare davvero, altrimenti lo
+// spostamento che segue verrebbe cancellato.
+func exitFullScreen(_ win: AXUIElement) {
+    AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString, kCFBooleanFalse)
+    for _ in 0..<30 {
+        if (winAttr(win, "AXFullScreen") as? Bool) != true { return }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+}
+
+// Sposta la finestra sul display scelto e, se richiesto, la porta a schermo
+// intero nativo (AXFullScreen). Richiede il permesso Accessibilità.
+// Chromium/Arc ignorano a volte il cambio di posizione quando la finestra è
+// già in schermo intero: si prova quindi a spostare così com'è e, se non
+// regge, si esce dallo schermo intero, si sposta e si rientra. Le operazioni
+// AX sono asincrone, quindi ogni passo viene verificato.
+func moveFrontWindow(displayIndex: Int?, fullscreen: Bool, bundleId: String? = nil) {
+    guard let scr = targetScreen(index: displayIndex) else { return }
+    let tx = scr["x"] as? Double ?? 0
+    let ty = scr["y"] as? Double ?? 0
+    let tw = scr["w"] as? Double ?? 0
+    let th = scr["h"] as? Double ?? 0
+    func apply(_ win: AXUIElement) {
+        var p = CGPoint(x: tx, y: ty)
+        var s = CGSize(width: tw, height: th)
+        if let pv = AXValueCreate(.cgPoint, &p) {
+            AXUIElementSetAttributeValue(win, kAXPositionAttribute as CFString, pv)
+        }
+        if let sv = AXValueCreate(.cgSize, &s) {
+            AXUIElementSetAttributeValue(win, kAXSizeAttribute as CFString, sv)
         }
     }
+    for _ in 0..<3 {
+        guard let win = axWindow(forBundle: bundleId) else {
+            Thread.sleep(forTimeInterval: 0.25); continue
+        }
+        if windowAlreadyOnTarget(win, x: tx, y: ty, fullscreen: fullscreen) { return }
+        if (winAttr(win, "AXFullScreen") as? Bool) == true {
+            // prima prova a spostare senza uscire dallo schermo intero: se
+            // regge non c'è il flash di uscita/rientro
+            apply(win)
+            Thread.sleep(forTimeInterval: 0.3)
+            if let p = axPoint(win, kAXPositionAttribute as String),
+               abs(p.x - CGFloat(tx)) < 2 && abs(p.y - CGFloat(ty)) < 2 {
+                if !fullscreen {
+                    exitFullScreen(win)
+                    Thread.sleep(forTimeInterval: 0.15)
+                    apply(win)
+                }
+                return
+            }
+            exitFullScreen(win)
+        }
+        apply(win)
+        Thread.sleep(forTimeInterval: 0.2)
+        if fullscreen {
+            AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString, kCFBooleanTrue)
+            Thread.sleep(forTimeInterval: 0.25)
+            apply(win)  // il rientro in schermo intero può far tornare la finestra a posto
+        }
+        if let p = axPoint(win, kAXPositionAttribute as String),
+           abs(p.x - CGFloat(tx)) < 2 && abs(p.y - CGFloat(ty)) < 2 {
+            return
+        }
+        Thread.sleep(forTimeInterval: 0.25)
+    }
+}
+
+func winAttr(_ w: AXUIElement, _ attr: String) -> CFTypeRef? {
+    var v: CFTypeRef?
+    AXUIElementCopyAttributeValue(w, attr as CFString, &v)
+    return v
+}
+
+// true se la finestra dell'app indicata è già in schermo intero: serve per
+// spostarla senza costringerla a uscire e rientrare.
+func arcIsFullscreen(_ bundleId: String?) -> Bool {
+    guard let win = axWindow(forBundle: bundleId) else { return false }
+    return (winAttr(win, "AXFullScreen") as? Bool) == true
 }
 
 // Entra/esce dallo schermo intero nativo (AXFullScreen) della finestra focale,
@@ -247,9 +339,12 @@ func setFrontWindowFullscreen(_ on: Bool) {
 // browser supportati: "default" usa il handler di sistema; gli altri mappano a un
 // bundle id. Arc/Brave/Edge/Chrome sono tutti basati su Chromium e condividono
 // la stessa interfaccia AppleScript per l'iniezione di JavaScript.
+// NB: l'bundle id di Arc è "company.thebrowser.Browser" (senza il "com." iniziale):
+// con l'id sbagliato urlForApplication ritorna nil e si finisce nel fallback del
+// browser di default, che ignora sia la scelta del browser sia il display.
 let browserBundleIDs: [String: String] = [
     "chrome": "com.google.Chrome",
-    "arc": "com.company.thebrowser.Browser",
+    "arc": "company.thebrowser.Browser",
     "brave": "com.brave.Browser",
     "edge": "com.microsoft.edgemac",
     "firefox": "org.mozilla.firefox",
@@ -293,12 +388,17 @@ func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, 
           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
         // browser richiesto non installato: fallback al browser di default
         NSWorkspace.shared.open(url)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+        }
         return
     }
-    // Arc: apri come tab nella finestra corrente per non passare da Air Traffic Control
+    // Arc: apri come tab nella finestra corrente per non passare da Air Traffic
+    // Control. La finestra è già stata spostata sul display di destinazione dal
+    // chiamante (case "openurl"), qui resta solo da applicare lo schermo intero.
     if browser == "arc", openURLInArcTab(urlString) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen, bundleId: bundle)
         }
         return
     }
@@ -306,7 +406,7 @@ func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, 
     cfg.activates = true
     NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: cfg) { _, _ in
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen, bundleId: bundle)
         }
     }
 }
@@ -766,9 +866,20 @@ stdin.readabilityHandler = { handle in
                 let displayIndex = cmd.displayIndex
                 let fullscreen = cmd.fullscreen ?? true
                 DispatchQueue.main.async {
+                    // Arc riusa sempre la finestra già aperta (sia che crei la
+                    // tab sia che riusi quella attiva): va spostata PRIMA,
+                    // altrimenti la pagina appare sul display sbagliato e poi
+                    // salta su quello giusto.
+                    if browser == "arc" {
+                        let bundleId = browserBundleIDs[browser]
+                        moveFrontWindow(displayIndex: displayIndex,
+                                        fullscreen: arcIsFullscreen(bundleId),
+                                        bundleId: bundleId)
+                    }
                     if reuse && navigateTabInBrowser(url, browser: browser) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen,
+                                            bundleId: browserBundleIDs[browser])
                         }
                     } else {
                         openURLInBrowser(url, browser: browser,
