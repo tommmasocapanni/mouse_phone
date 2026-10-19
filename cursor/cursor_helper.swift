@@ -256,6 +256,29 @@ let browserBundleIDs: [String: String] = [
     "safari": "com.apple.Safari",
 ]
 
+// Apre l'URL come nuova tab selezionata nella finestra Arc corrente. Serve a
+// evitare che Air Traffic Control ("most recent space") instradi il link verso
+// una Space con molte tab pinnate, che Arc ricaricherebbe tutte. Ritorna false
+// se Arc non ha finestre aperte (in quel caso si usa il comportamento normale).
+func openURLInArcTab(_ urlString: String) -> Bool {
+    let esc = escapeAppleScript(urlString)
+    let source = """
+    tell application "Arc"
+        if (count of windows) is 0 then return "0"
+        tell front window
+            set newTab to make new tab with properties {URL:"\(esc)"}
+            try
+                select newTab
+            end try
+        end tell
+        activate
+        return "1"
+    end tell
+    """
+    let (ok, res) = runAppleScript(source)
+    return ok && res.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+}
+
 func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, fullscreen: Bool) {
     guard let url = URL(string: urlString) else { return }
     // "default": lascia che macOS apra l'URL con il browser predefinito
@@ -270,6 +293,13 @@ func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, 
           let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else {
         // browser richiesto non installato: fallback al browser di default
         NSWorkspace.shared.open(url)
+        return
+    }
+    // Arc: apri come tab nella finestra corrente per non passare da Air Traffic Control
+    if browser == "arc", openURLInArcTab(urlString) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen)
+        }
         return
     }
     let cfg = NSWorkspace.OpenConfiguration()
@@ -412,25 +442,37 @@ func findMediaTab(browser: String, probe: String) -> Int? {
 func execJSInArcTab(tabId: String, js: String) -> (Bool, String) {
     let escaped = escapeAppleScript(js)
     let tid = escapeAppleScript(tabId)
+    // Opera solo nella Space corrente: selezionare una tab di un'altra Space
+    // farebbe cambiare Space ad Arc, che ricaricherebbe tutte le tab pinnate.
     let source = """
     tell application "Arc"
         if (count of windows) is 0 then return ""
-        set n to count of tabs of front window
-        set prevId to ((id of active tab of front window) as text)
-        set prevIdx to -1
-        set targetIdx to -1
-        repeat with i from 1 to n
-            try
-                set cid to ((id of tab i of front window) as text)
-                if cid is "\(tid)" then set targetIdx to i
-                if cid is prevId then set prevIdx to i
-            end try
-        end repeat
-        if targetIdx < 0 then return ""
-        select tab targetIdx of front window
-        set r to (execute front window's active tab javascript "\(escaped)")
-        if prevIdx > 0 then select tab prevIdx of front window
-        return r
+        tell front window
+            set curId to ((id of active tab) as text)
+            repeat with s in spaces
+                set i to 0
+                set hasCur to false
+                set targetIdx to -1
+                set prevIdx to -1
+                repeat with t in tabs of s
+                    set i to i + 1
+                    set cid to ((id of t) as text)
+                    if cid is curId then
+                        set hasCur to true
+                        set prevIdx to i
+                    end if
+                    if cid is "\(tid)" then set targetIdx to i
+                end repeat
+                if hasCur then
+                    if targetIdx < 0 then return ""
+                    select tab targetIdx of s
+                    set r to (execute front window's active tab javascript "\(escaped)")
+                    if prevIdx > 0 then select tab prevIdx of s
+                    return r
+                end if
+            end repeat
+            return ""
+        end tell
     end tell
     """
     // scan id + execute + ripristino in un unico script: serve più fiato
@@ -447,30 +489,43 @@ struct ArcMediaHit {
 // Restituisce nil se nessuna tab ha media. Il titolo si legge senza JS, per
 // questo si filtra prima: danzare su tutte le tab sarebbe insostenibile.
 func findMediaTabArc(probe: String, full: String, pattern: String) -> ArcMediaHit? {
+    // Scansiona SOLO la Space corrente: selezionare le tab di un'altra Space
+    // farebbe cambiare Space ad Arc, che ricaricherebbe tutti i bookmark/pin.
     let scan = """
     tell application "Arc"
         if (count of windows) is 0 then return ""
-        set n to count of tabs of front window
-        set prevId to ((id of active tab of front window) as text)
-        set prevIdx to -1
-        set outp to ""
-        repeat with i from 1 to n
-            try
-                set cid to ((id of tab i of front window) as text)
-                if cid is prevId then set prevIdx to i
-                set outp to outp & i & "%%" & cid & "%%" & (title of tab i of front window) & linefeed
-            end try
-        end repeat
-        return (prevIdx as text) & "@@@" & outp
+        tell front window
+            set curId to ((id of active tab) as text)
+            repeat with si from 1 to (count of spaces)
+                set s to space si
+                set i to 0
+                set hasCur to false
+                set prevIdx to -1
+                set outp to ""
+                repeat with t in tabs of s
+                    set i to i + 1
+                    set cid to ((id of t) as text)
+                    if cid is curId then
+                        set hasCur to true
+                        set prevIdx to i
+                    end if
+                    set outp to outp & i & "%%" & cid & "%%" & (title of t) & linefeed
+                end repeat
+                if hasCur then
+                    return (si as text) & "@@@" & (prevIdx as text) & "@@@" & outp
+                end if
+            end repeat
+            return ""
+        end tell
     end tell
     """
     let (ok, res) = runAppleScript(scan, timeoutSec: 25)
     guard ok else { return nil }
     let parts = res.components(separatedBy: "@@@")
-    guard parts.count >= 2, let prevIdx = Int(parts[0]) else { return nil }
+    guard parts.count >= 3, let spIdx = Int(parts[0]), let prevIdx = Int(parts[1]) else { return nil }
     var candidates: [(idx: Int, id: String)] = []
     let rx = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
-    for line in parts[1].split(separator: "\n", omittingEmptySubsequences: true) {
+    for line in parts[2].split(separator: "\n", omittingEmptySubsequences: true) {
         let seg = line.components(separatedBy: "%%")
         guard seg.count >= 3, let idx = Int(seg[0]) else { continue }
         let title = seg[2...].joined(separator: "%%")
@@ -485,10 +540,13 @@ func findMediaTabArc(probe: String, full: String, pattern: String) -> ArcMediaHi
     func runFull(_ idx: Int) -> (Bool, String) {
         let d = """
         tell application "Arc"
-            select tab \(idx) of front window
-            set r to (execute front window's active tab javascript "\(fullEsc)")
-            if \(prevIdx) > 0 then select tab \(prevIdx) of front window
-            return r
+            tell front window
+                set s to space \(spIdx)
+                select tab \(idx) of s
+                set r to (execute front window's active tab javascript "\(fullEsc)")
+                if \(prevIdx) > 0 then select tab \(prevIdx) of s
+                return r
+            end tell
         end tell
         """
         return runAppleScript(d, timeoutSec: 7)
@@ -501,19 +559,22 @@ func findMediaTabArc(probe: String, full: String, pattern: String) -> ArcMediaHi
         // sta suonando da un'altra parte
         let dance = """
         tell application "Arc"
-            select tab \(c.idx) of front window
-            set p to (execute front window's active tab javascript "\(probeEsc)")
-            if p contains "2" then
-                set r to (execute front window's active tab javascript "\(fullEsc)")
-                if \(prevIdx) > 0 then select tab \(prevIdx) of front window
-                return r
-            end if
-            if p contains "1" then
-                if \(prevIdx) > 0 then select tab \(prevIdx) of front window
-                return "PAUSA"
-            end if
-            if \(prevIdx) > 0 then select tab \(prevIdx) of front window
-            return ""
+            tell front window
+                set s to space \(spIdx)
+                select tab \(c.idx) of s
+                set p to (execute front window's active tab javascript "\(probeEsc)")
+                if p contains "2" then
+                    set r to (execute front window's active tab javascript "\(fullEsc)")
+                    if \(prevIdx) > 0 then select tab \(prevIdx) of s
+                    return r
+                end if
+                if p contains "1" then
+                    if \(prevIdx) > 0 then select tab \(prevIdx) of s
+                    return "PAUSA"
+                end if
+                if \(prevIdx) > 0 then select tab \(prevIdx) of s
+                return ""
+            end tell
         end tell
         """
         let (dok, dres) = runAppleScript(dance, timeoutSec: 7)
