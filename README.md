@@ -63,7 +63,7 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 
 <img src="img/TrackPad.png" alt="Pad multi-touch di dot." width="760">
 
-Dal divano, con l'Mac lontano dalla scrivania — il pad da un lato, il pannello `⌄` (testo, media, opzioni) dall'altro:
+Dal divano, con l'Mac lontano dalla scrivania — il trackpad da un lato, Air Mouse Control dall'altro:
 
 | Trackpad | Air Mouse Control |
 |:---:|:---:|
