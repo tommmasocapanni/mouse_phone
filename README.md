@@ -61,13 +61,13 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 | CALIBRA | Riporta il puntatore al centro |
 | CALIBRA · tieni premuto 3s | Mette in **pausa** il giroscopio; un tap lo riattiva e ricentra |
 
+<img src="img/TrackPad.png" alt="Pad multi-touch di dot." width="760">
+
+Dal divano, con l'Mac lontano dalla scrivania — il pad da un lato, il pannello `⌄` (testo, media, opzioni) dall'altro:
+
 | Il pad | Il pannello `⌄` |
 |:---:|:---:|
-| <img src="img/TrackPad.png" alt="Pad multi-touch di dot." width="360"> | <img src="img/AirMouse_Control.png" alt="Pannello di controllo: testo, media, opzioni" width="360"> |
-
-Dal divano, con l'Mac lontano dalla scrivania:
-
-<img src="img/Trackpad_view_from_sofa.png" alt="dot. usato dal divano" width="760">
+| <img src="img/Trackpad_view_from_sofa.png" alt="dot. usato dal divano" width="380"> | <img src="img/AirMouse_Control.png" alt="Pannello di controllo: testo, media, opzioni" width="380"> |
 
 > Lo swipe a 3 dita invia **Ctrl+←/→** tramite **System Events**: la prima volta
 > macOS può chiedere di consentire al terminale di controllare **System Events**
