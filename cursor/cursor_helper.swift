@@ -134,6 +134,52 @@ func mediaKey(_ name: String) {
     }
 }
 
+// MARK: - MediaRemote: comandi di riproduzione
+//
+// Da macOS 15.4 mediaremoted nega la LETTURA dell'info "in riproduzione"
+// ai processi terzi (servono gli entitlement com.apple.mediaremote.*),
+// quindi quella passa da /usr/bin/osascript (vedi nowplaying.applescript).
+// I COMANDI invece funzionano anche da un processo terzo: qui si usano
+// direttamente MRMediaRemoteSendCommand / MRMediaRemoteSetElapsedTime,
+// caricati con dlsym così l'helper compila e parte anche senza il framework.
+// Nessun permesso di Automazione richiesto (niente Apple Events).
+
+private let mrHandle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_LAZY)
+
+// MRCommand: 0 play, 1 pause, 2 toggle, 3 stop, 4 next, 5 previous,
+// 18 skip backward, 19 skip forward (intervallo in userInfo con la
+// chiave kMRMediaRemoteOptionSkipInterval — testato su Music.app; il
+// supporto è per-app: Music accetta solo lo skip indietro)
+private let mrCommandCodes: [String: Int] = [
+    "play": 0, "pause": 1, "toggle": 2, "next": 4, "prev": 5,
+    "skipback": 18, "skipfwd": 19,
+]
+
+// Su macOS 26 il simbolo è la plain MRMediaRemoteSendCommand (quella
+// WithOptions non esiste più): comandi e userInfo passano lo stesso.
+// I comandi arrivano all'app "in riproduzione" corrente di MediaRemote:
+// se a suonare è un browser, i comandi MediaRemote li ignora (l'utente
+// li aveva letti come "non funziona") — per quello il player web si
+// comanda via JS e quello di sistema via mrcommand.
+func mrSendCommand(_ code: Int, interval: Double? = nil) -> Bool? {
+    guard let h = mrHandle, let p = dlsym(h, "MRMediaRemoteSendCommand") else { return nil }
+    typealias Fn = @convention(c) (Int, UnsafeMutableRawPointer?) -> Bool
+    var info: CFDictionary?
+    if let iv = interval, iv > 0 {
+        // le chiavi di MediaRemote sono il nome della costante stessa
+        info = ["kMRMediaRemoteOptionSkipInterval": NSNumber(value: iv)] as CFDictionary
+    }
+    let raw = info.map { UnsafeMutableRawPointer(Unmanaged.passUnretained($0).toOpaque()) }
+    return unsafeBitCast(p, to: Fn.self)(code, raw)
+}
+
+func mrSetElapsedTime(_ seconds: Double) -> Bool? {
+    guard let h = mrHandle, let p = dlsym(h, "MRMediaRemoteSetElapsedTime") else { return nil }
+    typealias Fn = @convention(c) (Double) -> Void
+    unsafeBitCast(p, to: Fn.self)(max(0, seconds))
+    return true
+}
+
 // MARK: - Cursore (mostra/nascondi) per la modalità proiettore
 
 func setCursorVisible(_ visible: Bool) {
@@ -482,10 +528,13 @@ let browserAppleScriptName: [String: String] = [
 func execJSInBrowser(browser: String, js: String, tabIndex: Int? = nil) -> (Bool, String) {
     let escaped = escapeAppleScript(js)
     if browser == "safari" {
+        // tabIndex consente di raggiungere una tab di secondo piano (come su
+        // Chromium): senza, si opera sempre sulla tab corrente
+        let tabPart = tabIndex.map { "tab \($0) of front window" } ?? "current tab of front window"
         let source = """
         tell application "Safari"
             if (count of windows) is 0 then return ""
-            do JavaScript "\(escaped)" in current tab of front window
+            do JavaScript "\(escaped)" in \(tabPart)
         end tell
         """
         return runAppleScript(source)
@@ -503,28 +552,53 @@ func execJSInBrowser(browser: String, js: String, tabIndex: Int? = nil) -> (Bool
     return runAppleScript(source)
 }
 
-// Scorre le tab della front window alla ricerca di una che sta suonando
-// (audible) e ci esegue probe: restituisce l'indice della prima tab il cui
-// risultato contiene "1". Serve quando il media sta in una tab di secondo
-// piano (pinned tab / spazio diverso, es. Spotify) e non nella attiva.
+// Scorre le tab della front window alla ricerca di una che sta suonando e ci
+// esegue probe: restituisce l'indice della prima tab con media in
+// riproduzione ("2"), o in extremis la prima in pausa ("1"). Serve quando il
+// media sta in una tab di secondo piano (pinned tab, es. Spotify/YouTube) e
+// non nella attiva. Chromium ha la proprietà "audible" (probe solo su quelle);
+// Safari no, quindi prova ogni tab con do JavaScript.
 func findMediaTab(browser: String, probe: String) -> Int? {
-    guard let appName = browserAppleScriptName[browser] else { return nil }
+    guard browser == "safari" || browserAppleScriptName[browser] != nil else { return nil }
     let escaped = escapeAppleScript(probe)
-    let source = """
-    tell application "\(appName)"
-        if (count of windows) is 0 then return ""
-        set n to count of tabs of front window
-        repeat with i from 1 to n
-            try
-                if (audible of tab i of front window) then
-                    set r to (execute tab i of front window javascript "\(escaped)")
-                    if r contains "1" then return (i as text)
-                end if
-            end try
-        end repeat
-    end tell
-    return ""
-    """
+    let source: String
+    if browser == "safari" {
+        source = """
+        tell application "Safari"
+            if (count of windows) is 0 then return ""
+            set n to count of tabs of front window
+            set firstPause to 0
+            repeat with i from 1 to n
+                try
+                    set r to (do JavaScript "\(escaped)" in tab i of front window)
+                    if r contains "2" then return (i as text)
+                    if (r contains "1") and firstPause is 0 then set firstPause to i
+                end try
+            end repeat
+            if firstPause > 0 then return (firstPause as text)
+        end tell
+        return ""
+        """
+    } else {
+        source = """
+        tell application "\(browserAppleScriptName[browser] ?? "")"
+            if (count of windows) is 0 then return ""
+            set n to count of tabs of front window
+            set firstPause to 0
+            repeat with i from 1 to n
+                try
+                    if (audible of tab i of front window) then
+                        set r to (execute tab i of front window javascript "\(escaped)")
+                        if r contains "2" then return (i as text)
+                        if (r contains "1") and firstPause is 0 then set firstPause to i
+                    end if
+                end try
+            end repeat
+            if firstPause > 0 then return (firstPause as text)
+        end tell
+        return ""
+        """
+    }
     let (ok, res) = runAppleScript(source, timeoutSec: 15)
     guard ok else { return nil }
     return Int(res.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -812,6 +886,8 @@ struct Command: Decodable {
     let visible: Bool?
     let deviceId: Int?
     let volume: Int?
+    let seconds: Double?
+    let interval: Double?
 }
 
 let trusted = isTrusted()
@@ -945,6 +1021,29 @@ stdin.readabilityHandler = { handle in
                 } else {
                     emit(["type": "reply", "id": cmd.id ?? 0, "ok": false, "error": "nessuna tab con media"])
                 }
+            }
+        case "mrcommand":
+            // comandi MediaRemote sul player di sistema (Spotify, Music, VLC,
+            // ...): nessun Apple Events, quindi nessun permesso da concedere
+            let key = cmd.key ?? "toggle"
+            let seconds = cmd.seconds ?? 0
+            DispatchQueue.main.async {
+                var ok = false
+                var err: String? = nil
+                if key == "seek" {
+                    let r = mrSetElapsedTime(seconds)
+                    ok = r == true
+                    if r == nil { err = "MediaRemote non disponibile" }
+                } else if let code = mrCommandCodes[key] {
+                    let r = mrSendCommand(code, interval: cmd.interval)
+                    ok = r == true
+                    if r == nil { err = "MediaRemote non disponibile" }
+                } else {
+                    err = "comando sconosciuto"
+                }
+                var out: [String: Any] = ["type": "reply", "id": cmd.id ?? 0, "ok": ok]
+                if let e = err { out["error"] = e }
+                emit(out)
             }
         case "audiolist":
             DispatchQueue.main.async {

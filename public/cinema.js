@@ -737,7 +737,9 @@
   function updateCoverInfo(item) {
     if (!item) return;
     const title = item.title || "MEDIA";
-    const site = item.site || item.url || "";
+    const site = item.artist
+      ? item.artist + (item.site ? " · " + item.site : "")
+      : (item.site || item.url || "");
     const changed = npFullTitle.textContent !== title || npFullSite.textContent !== site;
     if (changed && np.fullOpen) {
       npFullInfo.classList.add("changing");
@@ -1062,6 +1064,8 @@
       title: d.title || "MEDIA",
       site: d.site || hostOf(playingUrl),
       art: d.art || "",
+      artist: d.artist || "",
+      via: d.via || "web",
     };
     if (playingUrl !== coverCurrentUrl) {
       coverCurrentUrl = playingUrl;
@@ -1072,14 +1076,19 @@
     document.getElementById("cinema").classList.add("has-np");
     npMiniPlay.style.visibility = "";
     setNpIcons(np.paused);
+    // skip-ads solo per i player web: su Spotify/Music non c'è nulla da
+    // cliccare, e la tab attiva del browser sarebbe una pagina a caso
+    if (npFullSkip) npFullSkip.style.visibility = d.via === "system" ? "hidden" : "";
     setArt(npMiniArt, d.art, d.site);
     npMiniTitle.textContent = d.title || "MEDIA";
-    npMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) + (d.site ? " · " + d.site : "");
+    npMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) +
+      (d.artist ? " · " + d.artist : (d.site ? " · " + d.site : ""));
 
     showHomeMini(true);
     if (homeMiniArt) setArt(homeMiniArt, d.art, d.site);
     setMiniTitle(d.title || "MEDIA");
-    if (homeMiniSub) homeMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) + (d.site ? " · " + d.site : "");
+    if (homeMiniSub) homeMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) +
+      (d.artist ? " · " + d.artist : (d.site ? " · " + d.site : ""));
 
     renderCoverflow();
     npFullDur.textContent = fmtTime(np.duration);
@@ -1229,14 +1238,14 @@
     const title = d.title || "MEDIA";
     const site = d.site || hostOf(d.url || "");
     const art = d.art || "";
-    const key = title + "|" + site + "|" + art;
+    const key = title + "|" + site + "|" + art + "|" + (d.artist || "");
     if (key !== npMetaKey) {
       npMetaKey = key;
       const artwork = [];
       if (art) artwork.push({ src: art, sizes: "512x512" });
       else if (site) artwork.push({ src: "https://www.google.com/s2/favicons?domain=" + encodeURIComponent(site) + "&sz=256", sizes: "256x256" });
       try {
-        MS.metadata = new MediaMetadata({ title: title, artist: site || "dot.", album: "dot. remote", artwork: artwork });
+        MS.metadata = new MediaMetadata({ title: title, artist: d.artist || site || "dot.", album: d.album || "dot. remote", artwork: artwork });
       } catch (_) {}
     }
     try { MS.playbackState = d.paused ? "paused" : "playing"; } catch (_) {}
@@ -1257,6 +1266,7 @@
       title: t.title || "MEDIA",
       site: t.site || "",
       art: t.art || "",
+      artist: t.artist || "",
       url: t.url || np.url,
       current: np.current,
       duration: np.duration,

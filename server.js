@@ -691,10 +691,10 @@ function unquoteChromiumResult(result) {
 // runMediaJS prova prima la tab attiva e, se non c'è media, fa cercare
 // all'helper una tab con titolo "da media" che abbia un elemento video/audio
 // e la usa (cache) per tutte le chiamate successive. Su Arc l'helper la
-// raggiunge con select/ripristino (JS solo su tab attiva). Safari è
-// mono-tab attiva come sempre.
+// raggiunge con select/ripristino (JS solo su tab attiva); su Safari
+// esegue il probe su ogni tab della finestra.
 let mediaTabId = null;        // id (UUID) tab con media — Arc
-let mediaTabIndex = null;     // indice tab con media — Chrome/Brave/Edge
+let mediaTabIndex = null;     // indice tab con media — Chrome/Brave/Edge/Safari
 let mediaTabBrowser = null;
 let mediaScanAt = 0;
 
@@ -707,7 +707,7 @@ const MEDIA_TITLE_RE =
   "spotify|netflix|youtube|youtu\\.be|soundcloud|disney\\+?|prime ?video|primevideo|tidal|deezer|music\\.apple|apple ?music|twitch|vimeo|hbo|max\\b|paramount|jellyfin|plex|vlc|mpv|infuse";
 
 async function runMediaJS(js, opts = {}) {
-  if (!["chrome", "arc", "brave", "edge"].includes(settings.browser)) return runBrowserJS(js);
+  if (!["chrome", "arc", "brave", "edge", "safari"].includes(settings.browser)) return runBrowserJS(js);
   const hit = opts.hit || (() => true);
   const preferPlaying = opts.preferPlaying || null;
   // 1. tab nota da una precedente scansione (Arc: danza select/ripristino)
@@ -758,6 +758,220 @@ async function runMediaJS(js, opts = {}) {
     } catch (_) {}
   }
   return fallback || active;
+}
+
+// --- player di sistema (Spotify, Music, VLC, podcast, ...) via MediaRemote ---
+// La LETTURA dell'info "in riproduzione" è negata ai processi terzi da
+// macOS 15.4 (entitlement com.apple.mediaremote.*): a leggerla ci pensa
+// /usr/bin/osascript — binario di piattaforma Apple — eseguendo
+// cursor/nowplaying.applescript, che carica MediaRemote e usa
+// MRNowPlayingRequest. I COMANDI (play/pausa/seek) funzionano invece
+// direttamente dalla helper (cmd "mrcommand": dlsym di
+// MRMediaRemoteSendCommand / MRMediaRemoteSetElapsedTime), senza permessi.
+const OSASCRIPT_NP = path.join(ROOT, "cursor", "nowplaying.applescript");
+
+function osascriptNP(args, timeout = 5000) {
+  return new Promise((resolve) => {
+    try {
+      execFile("/usr/bin/osascript", [OSASCRIPT_NP].concat(args), { timeout }, (err, stdout) => {
+        if (err) return resolve(null);
+        try {
+          const d = JSON.parse(String(stdout || "").trim());
+          resolve(d && d.error ? null : d);
+        } catch (_) { resolve(null); }
+      });
+    } catch (_) { resolve(null); }
+  });
+}
+
+// bundle id dell'app "in riproduzione" → host del sito (l'UI ci fa
+// favicon e accento; le chiavi sono in lowercase come SITE_ACCENTS)
+const SYSTEM_SITES = {
+  "com.spotify.client": "spotify.com",
+  "com.apple.music": "music.apple.com",
+  "com.apple.podcasts": "podcasts.apple.com",
+  "org.videolan.vlc": "videolan.org",
+  "com.apple.quicktimeplayerx": "apple.com",
+  "com.netflix.netflixplayer": "netflix.com",
+  "tv.plex.client": "plex.tv",
+  "com.plexapp.plex": "plex.tv",
+  "com.apple.itunes": "itunes.apple.com",
+};
+function siteForBundle(bundleId) {
+  const b = String(bundleId || "").toLowerCase();
+  if (SYSTEM_SITES[b]) return SYSTEM_SITES[b];
+  for (const [k, v] of Object.entries(SYSTEM_SITES)) {
+    if (b.startsWith(k)) return v;
+  }
+  return "";
+}
+
+async function systemNowPlaying() {
+  const d = await osascriptNP(["get"]);
+  if (!d || !d.title) return null;
+  // la posizione vive solo se l'app la pubblica: Spotify e i browser sì,
+  // Music.app no (resta a 0 — nessuna API di estrapolazione utilizzabile,
+  // il Timestamp MediaRemote non si aggiorna e MRContentItem non espone
+  // getter live). Il seek assoluto funziona comunque, e con la posizione
+  // ignota il seek delta usa lo skip nativo (vedi /api/seek)
+  return {
+    found: true,
+    via: "system",
+    title: String(d.title).slice(0, 180),
+    artist: String(d.artist || "").slice(0, 120),
+    album: String(d.album || "").slice(0, 120),
+    current: Number(d.current) || 0,
+    duration: Number(d.duration) || 0,
+    paused: !d.playing,
+    ended: false,
+    rate: 1,
+    url: "",
+    art: d.art || "",
+    site: siteForBundle(d.bundleId),
+    bundleId: String(d.bundleId || ""),
+  };
+}
+
+// Copertina di backup: MRNowPlayingRequest non espone l'artwork, quindi
+// per i media di sistema SENZA art si cerca il brano sull'API pubblica di
+// ricerca di iTunes (nessuna chiave richiesta). Cache positiva e negativa;
+// il risultato arriva al poll successivo, così il primo aggiornamento non
+// resta in coda ad una chiamata di rete.
+const trackArtCache = new Map();
+function trackArtKey(d) {
+  return (String(d.artist || "") + "|" + String(d.title || "")).toLowerCase();
+}
+async function prefetchTrackArt(d) {
+  const key = trackArtKey(d);
+  if (trackArtCache.has(key)) return;
+  let art = "";
+  try {
+    const url = "https://itunes.apple.com/search?term=" +
+      encodeURIComponent((d.artist ? d.artist + " " : "") + d.title) + "&limit=5";
+    const r = await fetch(url, { signal: AbortSignal.timeout(3500) });
+    const j = await r.json();
+    const hit = (j.results || []).find((x) =>
+      x.artworkUrl100 && (x.kind === "song" || x.kind === "podcast" || x.kind === "podcast-episode"));
+    if (hit) art = String(hit.artworkUrl100).replace(/\/\d+x\d+bb\.jpg/, "/600x600bb.jpg");
+  } catch (_) {}
+  if (trackArtCache.size > 400) trackArtCache.clear();
+  trackArtCache.set(key, art);
+}
+function trackArtSync(d) {
+  if (d.via !== "system" || d.art || !d.artist || !d.title) return;
+  const key = trackArtKey(d);
+  if (trackArtCache.has(key)) d.art = trackArtCache.get(key) || "";
+  else prefetchTrackArt(d).catch(() => {});
+}
+
+// ultimo player risolto: serve a /api/player, /api/seek e /api/skip per
+// sapere se i comandi devono andare al player web o a quello di sistema
+let lastNp = { at: 0, via: null, data: null };
+function freshLastNp() {
+  return lastNp.via && lastNp.data && !lastNp.data.stale && Date.now() - lastNp.at < 15000 ? lastNp : null;
+}
+// residuo di un media web che è sparito di colpo (browser chiuso/crash):
+// per 15s i comandi non toccano nessuno, così non finiscono
+// sull'app di sistema che nel frattempo è diventata "in riproduzione"
+function staleLastNp() {
+  return lastNp.data && lastNp.data.stale && Date.now() - lastNp.at < 15000 ? lastNp.data : null;
+}
+async function trySystemSeek(seconds, sysData) {
+  try {
+    const rep = await helperCall(
+      { cmd: "mrcommand", key: "seek", seconds: Math.max(0, Number(seconds) || 0) }, 6000);
+    if (rep && rep.ok) {
+      // il media di sistema può non pubblicare la posizione (Music resta
+      // sul blob del publisher, 0 o fermo): ci si ricorda l'ultimo target
+      // impostato per far tornare i conti sui seek delta successivi
+      sysPos.sec = Math.max(0, Number(seconds) || 0);
+      sysPos.at = Date.now();
+      if (sysData) sysPos.key = sysPosKey(sysData);
+      return true;
+    }
+    return false;
+  } catch (_) { return false; }
+}
+// ultima posizione impostata via seek assoluto sul player di sistema:
+// serve a calcolare i delta quando l'app non pubblica l'elapsed
+let sysPos = { key: "", sec: 0, at: 0 };
+function sysPosKey(d) {
+  return String(d.bundleId || "") + "|" + String(d.title || "");
+}
+// posizione "viva" del player di sistema: quella pubblicata se c'è,
+// altrimenti l'ultima impostata + il tempo trascorso (se in riproduzione)
+function systemPosition(sys) {
+  const pub = Number(sys.data.current) || 0;
+  if (pub > 0) return pub;
+  if (!sysPos.sec) return 0;
+  if (sysPosKey(sys.data) !== sysPos.key) return 0;
+  let v = sysPos.sec;
+  if (!sys.data.paused) v += (Date.now() - sysPos.at) / 1000;
+  return Math.min(v, Number(sys.data.duration) || v);
+}
+async function trySystemSkip(delta) {
+  const iv = Math.min(600, Math.abs(Number(delta) || 0));
+  if (iv < 1) return false;
+  try {
+    const rep = await helperCall(
+      { cmd: "mrcommand", key: delta > 0 ? "skipfwd" : "skipback", interval: iv }, 6000);
+    return !!(rep && rep.ok);
+  } catch (_) { return false; }
+}
+
+// Catena di risoluzione del "now playing":
+// 1. browser (ha url, seek preciso, skip-ads, titolo della pagina) — vince
+//    se sta suonando;
+// 2. player di sistema (Spotify, Music, VLC, ...) — vince se sta suonando
+//    mentre il web è fermo/assente;
+// 3. il web in pausa resta preferito al sistema fermo (ha l'URL, meglio per
+//    i controlli); il sistema in pausa vale solo se non c'è nulla altro.
+async function resolveNowPlaying() {
+  const r = await runMediaJS(JS_NOWPLAYING, {
+    find: true,
+    hit: (res) => /"found":true/.test(res),
+    // un media in pausa (es. video YouTube della tab attiva lasciato
+    // lì) non deve sovrascrivere un media che sta suonando in un'altra
+    // tab: si torna al risultato solo se nient'altro sta suonando
+    preferPlaying: (res) => {
+      try { const o = JSON.parse(res); return !!o.found && !o.paused && !o.ended; } catch (_) { return false; }
+    },
+  });
+  let data;
+  if (!r.ok) {
+    data = { found: false, reason: r.reason, error: r.error };
+  } else {
+    const raw = String(r.result || "").trim();
+    if (!raw) {
+      data = { found: false, reason: "no-window" };
+    } else {
+      try {
+        data = JSON.parse(raw);
+      } catch (_) {
+        const noPerm = /not allowed|consentito|privilege/i.test(raw);
+        data = { found: false, reason: noPerm ? "permission" : "parse", error: raw };
+      }
+    }
+  }
+  const webPlaying = !!(data.found && !data.paused && !data.ended);
+  if (!webPlaying) {
+    const sys = await systemNowPlaying();
+    if (sys && !sys.paused) data = sys;
+    else if (sys && !data.found) data = sys;
+  }
+  if (data && data.found) trackArtSync(data);
+  // media web sparito di colpo (browser chiuso/crash): si tiene la sua
+  // "via" ma marcata stale — il GET mostra not-found, i comandi no-op
+  const wasWeb = lastNp.via && lastNp.via !== "system" && lastNp.data && !lastNp.data.stale;
+  if (wasWeb && !webPlaying && !(data && data.found)) {
+    data = Object.assign({}, lastNp.data, { found: false, stale: true });
+  }
+  lastNp = {
+    at: Date.now(),
+    via: data && data.found ? (data.via || "web") : data && data.stale ? "web" : null,
+    data: data && data.found ? data : data && data.stale ? data : null,
+  };
+  return data;
 }
 
 const VIDEO_EXT = new Set([
@@ -1058,41 +1272,36 @@ async function handleApi(req, res, url) {
       return jsonResponse(res, 200, { ok: true, queue, index: -1 });
     }
     if (p === "/api/nowplaying" && method === "GET") {
-      const r = await runMediaJS(JS_NOWPLAYING, {
-        find: true,
-        hit: (res) => /"found":true/.test(res),
-        // un media in pausa (es. video YouTube della tab attiva lasciato
-        // lì) non deve sovrascrivere un media che sta suonando in un'altra
-        // tab: si torna al risultato solo se nient'altro sta suonando
-        preferPlaying: (res) => {
-          try { const o = JSON.parse(res); return !!o.found && !o.paused && !o.ended; } catch (_) { return false; }
-        },
-      });
-      if (!r.ok) {
-        return jsonResponse(res, 200, { found: false, reason: r.reason, error: r.error, browser: settings.browser });
-      }
-      let data;
-      const raw = String(r.result || "").trim();
-      if (!raw) {
-        data = { found: false, reason: "no-window" };
-      } else {
-        try {
-          data = JSON.parse(raw);
-        } catch (_) {
-          const noPerm = /not allowed|consentito|privilege/i.test(raw);
-          data = { found: false, reason: noPerm ? "permission" : "parse", error: raw };
-        }
-      }
+      const data = await resolveNowPlaying();
       data.browser = settings.browser;
       return jsonResponse(res, 200, data);
     }
     if (p === "/api/player" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
       const action = ["play", "pause", "toggle"].includes(b.action) ? b.action : "toggle";
-      const hitMedia = (res) => res !== "0" && res !== "";
+      const hitMedia = (x) => x !== "0" && x !== "";
+      // media web sparito: non c'è più un player da comandare, e mandare
+      // il comando a MediaRemote colpirebbe l'app che nel frattempo è
+      // diventata "in riproduzione"
+      if (staleLastNp()) return jsonResponse(res, 200, { ok: true, action, hit: false, stale: true });
+      // il player risolto è di sistema (es. Spotify): i comandi vanno a
+      // MediaRemote, non al browser (che al massimo ha una tab in pausa)
+      const sys = freshLastNp();
+      if (sys && sys.via === "system") {
+        try {
+          const rep = await helperCall({ cmd: "mrcommand", key: action }, 6000);
+          if (rep && rep.ok) return jsonResponse(res, 200, { ok: true, action, hit: true, system: true });
+        } catch (_) {}
+      }
       const r = await runMediaJS(jsPlayer(action), { find: true, hit: hitMedia });
+      if (r.ok && hitMedia(r.result)) return jsonResponse(res, 200, { ok: true, action, hit: true });
+      // nessun media web: si prova il player di sistema
+      try {
+        const rep = await helperCall({ cmd: "mrcommand", key: action }, 6000);
+        if (rep && rep.ok) return jsonResponse(res, 200, { ok: true, action, hit: true, system: true });
+      } catch (_) {}
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
-      return jsonResponse(res, 200, { ok: true, action, hit: r.result === "1" });
+      return jsonResponse(res, 200, { ok: true, action, hit: false });
     }
     if (p === "/api/seek" && method === "POST") {
       const b = JSON.parse((await readBody(req)) || "{}");
@@ -1100,19 +1309,61 @@ async function handleApi(req, res, url) {
         let d = Number(b.delta);
         if (!isFinite(d)) return jsonResponse(res, 400, { error: "delta non valido" });
         d = Math.max(-600, Math.min(600, d));
-        const rr = await runMediaJS(jsPlayer("seekrel", d), { find: true, hit: (res) => res !== "0" && res !== "" });
+        if (staleLastNp()) return jsonResponse(res, 200, { ok: false, stale: true });
+        const sys = freshLastNp();
+        if (sys && sys.via === "system") {
+          // posizione "viva": quella pubblicata (Spotify/browser) o l'ultima
+          // impostata da noi (app che non pubblicano l'elapsed, es. Music)
+          const cur = systemPosition(sys);
+          if (cur > 0) {
+            const target = Math.max(0, cur + d);
+            if (await trySystemSeek(target, sys.data)) return jsonResponse(res, 200, { ok: true, delta: d, position: target });
+            return jsonResponse(res, 200, { ok: false, reason: "error" });
+          }
+          // posizione del tutto ignota: skip nativo, se l'app lo supporta
+          if (await trySystemSkip(d)) return jsonResponse(res, 200, { ok: true, delta: d, skipped: true });
+          return jsonResponse(res, 200, { ok: false, reason: "no-position" });
+        }
+        const rr = await runMediaJS(jsPlayer("seekrel", d), { find: true, hit: (x) => x !== "0" && x !== "" });
+        if (rr.ok && rr.result !== "0" && rr.result !== "") {
+          const pos = Number(rr.result);
+          return jsonResponse(res, 200, { ok: true, delta: d, position: isFinite(pos) ? pos : null });
+        }
+        if (sys && sys.via === "system") {
+          const cur = systemPosition(sys);
+          if (cur > 0) {
+            const target = Math.max(0, cur + d);
+            if (await trySystemSeek(target, sys.data)) return jsonResponse(res, 200, { ok: true, delta: d, position: target });
+          } else if (await trySystemSkip(d)) {
+            return jsonResponse(res, 200, { ok: true, delta: d, skipped: true });
+          }
+        }
         if (!rr.ok) return jsonResponse(res, 200, { ok: false, reason: rr.reason, error: rr.error });
-        const pos = Number(rr.result);
-        return jsonResponse(res, 200, { ok: true, delta: d, position: isFinite(pos) ? pos : null });
+        return jsonResponse(res, 200, { ok: false, delta: d });
       }
       let sec = Number(b.seconds);
       if (!isFinite(sec) || sec < 0) return jsonResponse(res, 400, { error: "seconds non valido" });
       sec = Math.min(sec, 12 * 3600);
-      const r = await runMediaJS(jsPlayer("seek", sec), { find: true, hit: (res) => res !== "0" && res !== "" });
+      if (staleLastNp()) return jsonResponse(res, 200, { ok: false, stale: true });
+      const sys = freshLastNp();
+      if (sys && sys.via === "system") {
+        if (await trySystemSeek(sec, sys.data)) return jsonResponse(res, 200, { ok: true, hit: true, system: true });
+        return jsonResponse(res, 200, { ok: false, reason: "error" });
+      }
+      const r = await runMediaJS(jsPlayer("seek", sec), { find: true, hit: (x) => x !== "0" && x !== "" });
+      if (r.ok && r.result !== "0" && r.result !== "") return jsonResponse(res, 200, { ok: true, hit: true });
+      if (await trySystemSeek(sec)) return jsonResponse(res, 200, { ok: true, hit: true, system: true });
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
-      return jsonResponse(res, 200, { ok: true, hit: r.result === "1" });
+      return jsonResponse(res, 200, { ok: true, hit: false });
     }
     if (p === "/api/skip" && method === "POST") {
+      // per i media di sistema non si tocca il browser: la tab attiva è una
+      // pagina qualsiasi e i clic "skip" finirebbero su pulsanti a caso
+      const sys = freshLastNp();
+      if (sys && sys.via === "system") {
+        return jsonResponse(res, 200, { ok: true, clicked: null, ad: false });
+      }
+      if (staleLastNp()) return jsonResponse(res, 200, { ok: true, clicked: null, ad: false, stale: true });
       const r = await runMediaJS(JS_SKIP, { find: false, hit: (res) => !!res });
       if (!r.ok) return jsonResponse(res, 200, { ok: false, reason: r.reason, error: r.error });
       let out = { clicked: null, ad: false };
