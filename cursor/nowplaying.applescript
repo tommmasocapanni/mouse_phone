@@ -91,12 +91,38 @@ on getInfo()
 	set dur to my numText(info, "kMRMediaRemoteNowPlayingInfoDuration")
 	set cur to my numText(info, "kMRMediaRemoteNowPlayingInfoElapsedTime")
 	set playing to false
+	set rate to 1
 	try
 		set rv to info's valueForKey:"kMRMediaRemoteNowPlayingInfoPlaybackRate"
+		if rv is not missing value then set rate to (rv's doubleValue())
 		if rv is missing value then
 			set playing to true
-		else if (rv's doubleValue()) > 0 then
+		else if rate > 0 then
 			set playing to true
+		end if
+	end try
+	-- alcune app (es. Spotify dentro Arc) pubblicano il blob UNA sola volta:
+	-- elapsedTime è la posizione all'istante del Timestamp e resta fermo.
+	-- Si scala a "ora": posizione = elapsed + (now - timestamp) * rate.
+	-- Il valore è in secondi; se il timestamp non c'è o è nel futuro, no-op.
+	try
+		set ts to info's valueForKey:"kMRMediaRemoteNowPlayingInfoTimestamp"
+		if ts is not missing value then
+			set base to 0
+			try
+				set base to (my numText(info, "kMRMediaRemoteNowPlayingInfoElapsedTime")) as real
+			end try
+			set dt to (current application's NSDate's now)'s timeIntervalSinceDate:ts
+			if dt > 0 and rate > 0 then
+				set adv to base + dt * rate
+				set durN to 0
+				try
+					set durN to (my numText(info, "kMRMediaRemoteNowPlayingInfoDuration")) as real
+				end try
+				if durN > 0 and adv > durN then set adv to durN
+				-- stringa con punto decimale (locale-safe)
+				set cur to ((current application's NSNumber's numberWithDouble:adv)'s stringValue()) as text
+			end if
 		end if
 	end try
 	set art to ""

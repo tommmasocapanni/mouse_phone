@@ -608,7 +608,42 @@ function publicSettings() {
 }
 
 // --- controllo del player web tramite iniezione JS (helper execjs) ---
-const JS_MEDIA = "document.querySelector('video')||document.querySelector('audio')";
+// Sceglie l'elemento media "giusto": non basta il primo <video>, perché
+// Spotify Web (e simili) mettono un visualizer <video loop> di pochi
+// secondi che non è la traccia — la musica gira in Web Audio e non è
+// leggibile dal DOM. Quindi si scartano i media brevissimi in loop e si
+// preferisce un elemento con durata credibile e non muto/hidden.
+const JS_PICK_MEDIA =
+  "function(){var c=[];var vs=document.querySelectorAll('video');var as=document.querySelectorAll('audio');" +
+  "for(var i=0;i<vs.length;i++)c.push(vs[i]);for(var j=0;j<as.length;j++)c.push(as[j]);" +
+  "function bad(v){if(!v)return true;" +
+  "var d=v.duration;" +
+  "if(v.loop&&isFinite(d)&&d>0&&d<30)return true;" +
+  "return false;}" +
+  "for(var k=0;k<c.length;k++){if(!bad(c[k])&&!c[k].paused)return c[k];}" +
+  "for(var m=0;m<c.length;m++){if(!bad(c[m]))return c[m];}" +
+  "return null;}";
+const JS_MEDIA = "(" + JS_PICK_MEDIA + ")()";
+
+// artwork dal DOM della pagina, per le web app che non espongono l'immagine
+// via <video>/<audio> (Spotify Web: il player mostra l'artwork in un <img>
+// anche quando il brano ha un canvas video, dove il blob di sistema è senza
+// art). Ordine: selettori noti del now-playing, poi og:image / image_src,
+// infine l'immagine più grande visibile nell'area del player.
+const JS_ARTWORK =
+  "(function(){try{var sels=['[data-testid=\"cover-art-image\"]','[data-testid=\"now-playing-widget\"] img'," +
+  "'[data-testid=\"CoverSlotCollapsed__container\"] img','[data-testid=\"now-playing-image\"] img'];" +
+  "var best='';function consider(u){u=String(u||'');if(!u)return;if(u.indexOf('data:')===0)return;" +
+  "if(u.length>best.length)best=u;}" +
+  "for(var s=0;s<sels.length;s++){var els=document.querySelectorAll(sels[s]);" +
+  "for(var i=0;i<els.length;i++){var im=els[i].tagName==='IMG'?els[i]:els[i].querySelector('img');" +
+  "if(im)consider(im.currentSrc||im.src);}}" +
+  "if(!best){var mm=document.querySelector('meta[property=\"og:image\"],meta[name=\"og:image\"],link[rel=\"image_src\"]');" +
+  "if(mm)consider(mm.content||mm.href);}" +
+  "if(best){try{best=new URL(best,location.href).href;}catch(e){}}" +
+  "return JSON.stringify({art:best});" +
+  "}catch(e){return JSON.stringify({art:''});}})()";
+
 const JS_NOWPLAYING =
   "(function(){try{var v=" + JS_MEDIA + ";if(!v)return '{\"found\":false}';" +
   "var t=String(document.title||'').slice(0,180);" +
@@ -699,8 +734,9 @@ let mediaTabBrowser = null;
 let mediaScanAt = 0;
 
 // probe: '0' niente media, '1' media in pausa, '2' in riproduzione
+// (stessa selezione "media giusto" del now playing: scarta i visualizer)
 const MEDIA_PROBE =
-  "(function(){var v=document.querySelector('video')||document.querySelector('audio');if(!v||v.ended)return '0';return v.paused?'1':'2';})()";
+  "(function(){var v=" + JS_MEDIA + ";if(!v||v.ended)return '0';return v.paused?'1':'2';})()";
 // titoli tab che consideriamo "potenzialmente in riproduzione" per il
 // prefilter (senza questo, danzare su tutte le tab è insostenibile)
 const MEDIA_TITLE_RE =
@@ -806,23 +842,43 @@ function siteForBundle(bundleId) {
   return "";
 }
 
+// ultima posizione vista del player di sistema, per la guardia
+// anti-regressione: alcune app (Spotify dentro Arc) ogni tanto
+// ripubblicano il blob con elapsedTime azzerato sullo stesso brano,
+// e la timeline "tornerebbe a zero e ripartirebbe"
+let sysSeen = { key: "", title: "", cur: 0, at: 0 };
+
 async function systemNowPlaying() {
   const d = await osascriptNP(["get"]);
   if (!d || !d.title) return null;
-  // la posizione vive solo se l'app la pubblica: Spotify e i browser sì,
-  // Music.app no (resta a 0 — nessuna API di estrapolazione utilizzabile,
-  // il Timestamp MediaRemote non si aggiorna e MRContentItem non espone
-  // getter live). Il seek assoluto funziona comunque, e con la posizione
-  // ignota il seek delta usa lo skip nativo (vedi /api/seek)
+  // la posizione dell'applescript è già estrapolata col Timestamp
+  // MediaRemote; Music.app invece non la pubblica affatto (resta 0)
+  let cur = Number(d.current) || 0;
+  const dur = Number(d.duration) || 0;
+  const paused = !d.playing;
+  const key = String(d.bundleId || "") + "|" + String(d.title || "");
+  const now = Date.now();
+  // anti-regressione: stesso brano, posizione che torna indietro di
+  // oltre 5s mentre suona → è il reset del publisher, non un seek reale
+  // (un seek o un riavvio cambiano il Timestamp e sono quindi legittimi,
+  // ma se il salto è piccolo lo si accetta; qui serve solo a coprire
+  // l'azzeramento, quindi si tiene l'ultima posizione nota + trascorso)
+  if (!paused && sysSeen.key === key && sysSeen.cur > 0) {
+    const expected = sysSeen.cur + (now - sysSeen.at) / 1000;
+    if (cur < sysSeen.cur - 5 && expected >= sysSeen.cur) {
+      cur = Math.min(expected, dur > 0 ? dur : expected);
+    }
+  }
+  sysSeen = { key, title: String(d.title || ""), cur, at: now };
   return {
     found: true,
     via: "system",
     title: String(d.title).slice(0, 180),
     artist: String(d.artist || "").slice(0, 120),
     album: String(d.album || "").slice(0, 120),
-    current: Number(d.current) || 0,
-    duration: Number(d.duration) || 0,
-    paused: !d.playing,
+    current: cur,
+    duration: dur,
+    paused,
     ended: false,
     rate: 1,
     url: "",
@@ -839,7 +895,15 @@ async function systemNowPlaying() {
 // resta in coda ad una chiamata di rete.
 const trackArtCache = new Map();
 function trackArtKey(d) {
-  return (String(d.artist || "") + "|" + String(d.title || "")).toLowerCase();
+  // album e bundleId nella chiave: due brani con stesso titolo/artista ma
+  // album diversi (o lo stesso titolo su app diverse) non devono
+  // condividere la copertina in cache
+  return [
+    String(d.artist || ""),
+    String(d.title || ""),
+    String(d.album || ""),
+    String(d.bundleId || ""),
+  ].join("|").toLowerCase();
 }
 async function prefetchTrackArt(d) {
   const key = trackArtKey(d);
@@ -847,21 +911,87 @@ async function prefetchTrackArt(d) {
   let art = "";
   try {
     const url = "https://itunes.apple.com/search?term=" +
-      encodeURIComponent((d.artist ? d.artist + " " : "") + d.title) + "&limit=5";
+      encodeURIComponent((d.artist ? d.artist + " " : "") + d.title) + "&limit=8";
     const r = await fetch(url, { signal: AbortSignal.timeout(3500) });
     const j = await r.json();
-    const hit = (j.results || []).find((x) =>
-      x.artworkUrl100 && (x.kind === "song" || x.kind === "podcast" || x.kind === "podcast-episode"));
-    if (hit) art = String(hit.artworkUrl100).replace(/\/\d+x\d+bb\.jpg/, "/600x600bb.jpg");
+    const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const wantArtist = norm(d.artist);
+    const wantTitle = norm(d.title);
+    const wantAlbum = norm(d.album);
+    // punteggio: l'artista deve combaciare (altrimenti il match per titolo
+    // può restituire la cover di un altro brano); album/titolo rafforzano
+    let best = null;
+    let bestScore = 0;
+    for (const x of j.results || []) {
+      if (!x.artworkUrl100) continue;
+      if (!["song", "podcast", "podcast-episode"].includes(x.kind)) continue;
+      const a = norm(x.artistName);
+      const t = norm(x.trackName);
+      if (wantArtist && a && !a.includes(wantArtist) && !wantArtist.includes(a)) continue;
+      let score = wantArtist && a ? 3 : 0;
+      if (wantTitle && t === wantTitle) score += 3;
+      else if (wantTitle && t && (t.includes(wantTitle) || wantTitle.includes(t))) score += 1;
+      if (wantAlbum && norm(x.collectionName) === wantAlbum) score += 2;
+      if (score > bestScore) { bestScore = score; best = x; }
+    }
+    if (best) art = String(best.artworkUrl100).replace(/\/\d+x\d+bb\.jpg/, "/600x600bb.jpg");
   } catch (_) {}
   if (trackArtCache.size > 400) trackArtCache.clear();
   trackArtCache.set(key, art);
 }
 function trackArtSync(d) {
-  if (d.via !== "system" || d.art || !d.artist || !d.title) return;
+  if (d.via !== "system" || d.art || !d.title) return;
   const key = trackArtKey(d);
-  if (trackArtCache.has(key)) d.art = trackArtCache.get(key) || "";
-  else prefetchTrackArt(d).catch(() => {});
+  if (domArtCache.has(key)) { if (domArtCache.get(key)) d.art = domArtCache.get(key); return; }
+  const it = trackArtCache.has(key) ? (trackArtCache.get(key) || "") : null;
+  if (it) { d.art = it; return; }
+  // niente cache: prima l'artwork ufficiale dal DOM (Spotify Web la mostra
+  // sempre, anche coi brani in canvas), in parallelo la ricerca iTunes
+  prefetchTrackArt(d).catch(() => {});
+  prefetchDomArt(d).catch(() => {});
+}
+
+// Artwork letta dal DOM della pagina web, per le web app il cui now-playing
+// arriva dal sistema (Spotify dentro un browser: il blob MediaRemote non ha
+// artwork e spesso il brano non è su iTunes, es. Amaarae - Counterfeit).
+// Vale solo se la pagina corrente è quella in riproduzione.
+const domArtCache = new Map();
+let domArtBusy = false;
+
+// Spotify serve la stessa immagine a varie risoluzioni: la dimensione è
+// codificata nell'header dell'URL (es. ab67616d00004851 = 64px,
+// ab67616d0000b273 = 640px). Il DOM del player usa la miniatura 64px: qui
+// si riscrive all'immagine grande, mantenendo l'hash del contenuto.
+//   <prefix16><hash...>  →  ab67616d0000b273<hash...>
+function hiResArt(url) {
+  const u = String(url || "");
+  const m = u.match(/^(https?:\/\/i\.scdn\.co\/image\/)([0-9a-f]{16})([0-9a-f]{24})([?#].*)?$/i);
+  if (!m) return u;
+  // i primi byte (8 hex) identificano il tipo; per song/album art
+  // iniziano per "ab6761". Solo in quel caso si applica il 640px noto.
+  if (!/^ab6761/i.test(m[2])) return u;
+  return m[1] + "ab67616d0000b273" + m[3] + (m[4] || "");
+}
+
+async function prefetchDomArt(d) {
+  const key = trackArtKey(d);
+  if (domArtCache.has(key) || domArtBusy) return;
+  domArtBusy = true;
+  try {
+    const r = await runMediaJS(JS_ARTWORK, { find: true, hit: (res) => /"art":"[^"]/.test(res) });
+    if (r.ok) {
+      try {
+        const o = JSON.parse(String(r.result || "").trim());
+        if (o && o.art) {
+          const art = hiResArt(o.art);
+          if (domArtCache.size > 400) domArtCache.clear();
+          domArtCache.set(key, art);
+          d.art = art;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  domArtBusy = false;
 }
 
 // ultimo player risolto: serve a /api/player, /api/seek e /api/skip per

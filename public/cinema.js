@@ -215,7 +215,7 @@
   const COVERFLOW_OPACITY = [1, 0.72, 0.42];
   const COVERFLOW_SHADE = [0, 0.25, 0.5];
   const COVERFLOW_SNAP_PX = 40;
-  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0, queueClearing: false, currentTrack: null };
+  const np = { running: false, timer: null, busy: false, found: false, paused: true, current: 0, duration: 0, auto: false, next: false, mode: "none", url: "", ending: false, pendingNav: false, scrubbing: false, cinema: false, fullOpen: false, navUntil: 0, queueClearing: false, currentTrack: null, trackKey: "" };
 
   // avvia una transizione tra brani: mantiene viva la UI finché il nuovo video
   // non è pronto (evita che il player "sparisca e ricompaia")
@@ -1059,11 +1059,16 @@
     np.current = Number(d.current) || 0;
     np.duration = Number(d.duration) || 0;
     const playingUrl = String(d.url || "");
+    // chiave del brano corrente: se cambia titolo/artista/sito non si deve
+    // ereditare la copertina del brano precedente mentre la nuova carica
+    const trackKey = [d.title || "", d.artist || "", d.album || "", d.via || ""].join("|");
+    const trackChanged = trackKey !== np.trackKey;
+    np.trackKey = trackKey;
     np.currentTrack = {
       url: playingUrl,
       title: d.title || "MEDIA",
       site: d.site || hostOf(playingUrl),
-      art: d.art || "",
+      art: (trackChanged && !d.art) ? "" : (d.art || ""),
       artist: d.artist || "",
       via: d.via || "web",
     };
@@ -1079,13 +1084,13 @@
     // skip-ads solo per i player web: su Spotify/Music non c'è nulla da
     // cliccare, e la tab attiva del browser sarebbe una pagina a caso
     if (npFullSkip) npFullSkip.style.visibility = d.via === "system" ? "hidden" : "";
-    setArt(npMiniArt, d.art, d.site);
+    setArt(npMiniArt, np.currentTrack.art, d.site);
     npMiniTitle.textContent = d.title || "MEDIA";
     npMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) +
       (d.artist ? " · " + d.artist : (d.site ? " · " + d.site : ""));
 
     showHomeMini(true);
-    if (homeMiniArt) setArt(homeMiniArt, d.art, d.site);
+    if (homeMiniArt) setArt(homeMiniArt, np.currentTrack.art, d.site);
     setMiniTitle(d.title || "MEDIA");
     if (homeMiniSub) homeMiniSub.textContent = fmtTime(np.current) + " / " + fmtTime(np.duration) +
       (d.artist ? " · " + d.artist : (d.site ? " · " + d.site : ""));
