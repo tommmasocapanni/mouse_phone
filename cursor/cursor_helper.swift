@@ -99,7 +99,7 @@ func typeText(_ text: String) {
 let keyCodes: [String: CGKeyCode] = [
     "return": 36, "tab": 48, "space": 49, "escape": 53, "delete": 117,
     "left": 123, "right": 124, "down": 125, "up": 126,
-    "w": 13, "q": 12, "t": 17, "r": 15, "n": 45, "f": 3,
+    "w": 13, "q": 12, "s": 1, "z": 9, "t": 17, "r": 15, "n": 45, "f": 3,
 ]
 
 func pressKey(name: String, command: Bool, control: Bool = false) {

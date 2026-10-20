@@ -1251,7 +1251,13 @@
   // ---------- tastiera ----------
   function sendText() {
     const v = textInput.value.trim();
-    if (!v) return;
+    if (!v) {
+      // input vuoto: il ↵ invia il tasto Invio al Mac come comando rapido
+      send({ type: "key", key: "return", command: false });
+      toastMsg("INVIO INVIATO");
+      hapticTick();
+      return;
+    }
     send({ type: "text", text: v });
     textInput.value = "";
     toastMsg("TESTO INVIATO");
@@ -1270,6 +1276,15 @@
   document.querySelectorAll("[data-media]").forEach((btn) => {
     btn.addEventListener("click", () => {
       send({ type: "media", key: btn.dataset.media });
+      hapticTick();
+    });
+  });
+
+  // ---------- comandi rapidi (tasti Mac) ----------
+  document.querySelectorAll("[data-key]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      send({ type: "key", key: btn.dataset.key, command: true });
+      toastMsg((btn.textContent || "").trim().toUpperCase() + " INVIATO");
       hapticTick();
     });
   });

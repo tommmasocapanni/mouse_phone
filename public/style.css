@@ -1697,6 +1697,13 @@ body {
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 
+.chips-label {
+  margin: 14px 0 8px;
+  font-size: 8px;
+  letter-spacing: .14em;
+  color: var(--mid);
+}
+
 .chip {
   padding: 10px 14px;
   border-radius: 11px;
