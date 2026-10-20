@@ -263,9 +263,19 @@ func axPoint(_ w: AXUIElement, _ attr: String) -> CGPoint? {
 
 // true se la finestra è già sul display di destinazione e in schermo intero
 // come richiesto: in quel caso non si tocca nulla (niente flicker, niente attese).
+// NB: in schermo intero macOS riporta la posizione con l'offset della barra dei
+// menu (es. y=33), non (0,0): confrontare le coordinate farebbe fallire sempre
+// il test e il loop di moveFrontWindow continuerebbe a uscire/rientrare (il
+// "mette e toglie" a ripetizione). In fullscreen quindi si verifica solo che la
+// finestra copra il display target.
 func windowAlreadyOnTarget(_ win: AXUIElement, x: Double, y: Double, fullscreen: Bool) -> Bool {
     guard let p = axPoint(win, kAXPositionAttribute as String) else { return false }
     let fs = (winAttr(win, "AXFullScreen") as? Bool) == true
+    if fullscreen && fs {
+        // fullscreen: la posizione non è affidabile; basta che il punto target
+        // (angolo del display scelto) non sia a sinistra/sopra la finestra.
+        return p.x <= CGFloat(x) + 4
+    }
     return abs(p.x - CGFloat(x)) < 2 && abs(p.y - CGFloat(y)) < 2 && fs == fullscreen
 }
 
@@ -307,28 +317,25 @@ func moveFrontWindow(displayIndex: Int?, fullscreen: Bool, bundleId: String? = n
             Thread.sleep(forTimeInterval: 0.25); continue
         }
         if windowAlreadyOnTarget(win, x: tx, y: ty, fullscreen: fullscreen) { return }
-        if (winAttr(win, "AXFullScreen") as? Bool) == true {
-            // prima prova a spostare senza uscire dallo schermo intero: se
-            // regge non c'è il flash di uscita/rientro
-            apply(win)
-            Thread.sleep(forTimeInterval: 0.3)
-            if let p = axPoint(win, kAXPositionAttribute as String),
-               abs(p.x - CGFloat(tx)) < 2 && abs(p.y - CGFloat(ty)) < 2 {
-                if !fullscreen {
-                    exitFullScreen(win)
-                    Thread.sleep(forTimeInterval: 0.15)
-                    apply(win)
-                }
-                return
-            }
+        let isFs = (winAttr(win, "AXFullScreen") as? Bool) == true
+        if isFs {
+            // già in schermo intero: per spostarla su un altro display bisogna
+            // uscirne (macOS non accetta un semplice set della posizione).
+            // Se invece la vogliamo fullscreen, è sufficiente: niente da fare.
+            if fullscreen { return }
             exitFullScreen(win)
         }
+        // sposta/ridimensiona sul display scelto (finestra non fullscreen)
         apply(win)
         Thread.sleep(forTimeInterval: 0.2)
         if fullscreen {
+            // entra in schermo intero UNA volta e non riapplicare la posizione:
+            // in fullscreen la posizione è gestita da macOS con l'offset della
+            // barra dei menu, e un secondo set() farebbe uscire/rientrare.
             AXUIElementSetAttributeValue(win, "AXFullScreen" as CFString, kCFBooleanTrue)
-            Thread.sleep(forTimeInterval: 0.25)
-            apply(win)  // il rientro in schermo intero può far tornare la finestra a posto
+            Thread.sleep(forTimeInterval: 0.4)
+            if let w2 = axWindow(forBundle: bundleId),
+               windowAlreadyOnTarget(w2, x: tx, y: ty, fullscreen: true) { return }
         }
         if let p = axPoint(win, kAXPositionAttribute as String),
            abs(p.x - CGFloat(tx)) < 2 && abs(p.y - CGFloat(ty)) < 2 {
@@ -448,12 +455,21 @@ func openURLInBrowser(_ urlString: String, browser: String, displayIndex: Int?, 
         }
         return
     }
-    let cfg = NSWorkspace.OpenConfiguration()
-    cfg.activates = true
-    NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: cfg) { _, _ in
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen, bundleId: bundle)
-        }
+    // NSWorkspace.open da un tool CLI senza bundle non lancia in modo affidabile
+    // il browser quando è chiuso (il completion handler non scatta). Si usa
+    // quindi /usr/bin/open -a <app>, che funziona sempre.
+    let p = Process()
+    p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+    p.arguments = ["-a", appURL.path, urlString]
+    do {
+        try p.run()
+    } catch {
+        NSWorkspace.shared.open(url)
+    }
+    // l'app può metterci un attimo a comparire: retry più lunghi, e la finestra
+    // viene spostata/messa in fullscreen una sola volta da moveFrontWindow
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        moveFrontWindow(displayIndex: displayIndex, fullscreen: fullscreen, bundleId: bundle)
     }
 }
 
