@@ -1,6 +1,11 @@
 # dot.
 Trackpad + puntatore wireless per il Mac, in Safari su iPhone (UI stile Nothing "dot.").
 
+<img src="img/TrackPad_on_desk.png" alt="dot. — il trackpad wireless usato da iPhone sul desk" width="760">
+
+> **dot.** trasforma l'iPhone in trackpad + puntatore per il Mac: pad multi-touch,
+> giroscopio per il puntatore, media e bookmark, senza app da installare.
+
 ## Setup
 
 ```bash
@@ -56,6 +61,14 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 | CALIBRA | Riporta il puntatore al centro |
 | CALIBRA · tieni premuto 3s | Mette in **pausa** il giroscopio; un tap lo riattiva e ricentra |
 
+| Il pad | Il pannello `⌄` |
+|:---:|:---:|
+| <img src="img/TrackPad.png" alt="Pad multi-touch di dot." width="360"> | <img src="img/AirMouse_Control.png" alt="Pannello di controllo: testo, media, opzioni" width="360"> |
+
+Dal divano, con l'Mac lontano dalla scrivania:
+
+<img src="img/Trackpad_view_from_sofa.png" alt="dot. usato dal divano" width="760">
+
 > Lo swipe a 3 dita invia **Ctrl+←/→** tramite **System Events**: la prima volta
 > macOS può chiedere di consentire al terminale di controllare **System Events**
 > (Impostazioni → Privacy e sicurezza → Automazione) e serve il permesso
@@ -75,6 +88,22 @@ Alternativa senza endpoint HTTP: AirDrop di `certs/rootCA.pem` dal Mac all'iPhon
 > (`prefers-color-scheme`). In dark il tema usa accenti **rossi** su sfondo
 > nero/grigio.
 
+## Cinema · bookmark · coda
+
+La view **Cinema** è il lato "lounge" di dot.: dal divano lanci i link e li
+controlli sul Mac, senza toccare la tastiera.
+
+- **Bookmark** — griglia di scorciatoie (`/api/bookmarks`), riordinabili, con
+  icona e URL: un tap e la pagina si apre sul Mac.
+- **Cast** — incolla un link → **LANCIA** lo apre subito, **+ CODA** lo mette in
+  coda (`/api/queue`).
+- **Player** — coverflow dei titoli, volume e scrubbing, sezione
+  **CONTINUE PLAYING** con riproduzione automatica della coda.
+
+| Bookmark dal divano | Player per le serie | Coda sul desk |
+|:---:|:---:|:---:|
+| <img src="img/Bookmarks_view_from_sofa.png" alt="Vista bookmark da divano" width="300"> | <img src="img/Media_Player_for_streaming_serie_Tv.png" alt="Media player per streaming serie TV" width="300"> | <img src="img/Queue_Mockup_on_Desk.png" alt="Coda di riproduzione" width="300"> |
+
 ## Struttura
 
 ```
@@ -84,3 +113,12 @@ cursor/cursor_helper.swift  driver CGEvent (compilato con cursor/build.sh)
 scripts/gen-certs.sh        CA locale + certificato server (PKI a 2 livelli)
 scripts/gen-icon.swift      icona PWA 180×180
 ```
+
+## Materiali
+
+Mockup per l'App Store e slide informative:
+
+| | |
+|:---:|:---:|
+| <img src="img/mock_up_store_1.png" alt="Mockup store 1" width="380"> | <img src="img/mock_up_store_2.png" alt="Mockup store 2" width="380"> |
+| <img src="img/slide_informativa_1.png" alt="Slide informativa 1" width="380"> | <img src="img/slide_informativa_2.png" alt="Slide informativa 2" width="380"> |
