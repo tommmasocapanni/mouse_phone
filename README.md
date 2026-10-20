@@ -1,5 +1,5 @@
 # dot.
-Trackpad + puntatore wireless per il Mac, in Safari su iPhone (UI stile Nothing "dot.").
+Trackpad + puntatore wireless per il Mac, in Safari su iPhone.
 
 <img src="img/TrackPad_on_desk.png" alt="dot. — il trackpad wireless usato da iPhone sul desk" width="760">
 
